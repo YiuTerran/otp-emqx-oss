@@ -21,6 +21,119 @@ limitations under the License.
 
 This document describes the changes made to the Compiler application.
 
+## Compiler 8.6.1.8
+
+### Fixed Bugs and Malfunctions
+
+- Compilation of a function with thousands of clauses would be very slow.
+
+  Own Id: OTP-20437 Aux Id: [GH-11735], [PR-11767]
+
+- Sometimes compiling with `deterministic` would not guarantee generation of identical BEAM files for every build.
+
+  Own Id: OTP-20438 Aux Id: [GH-11748], [PR-11753]
+
+[GH-11735]: https://github.com/erlang/otp/issues/11735
+[PR-11767]: https://github.com/erlang/otp/pull/11767
+[GH-11748]: https://github.com/erlang/otp/issues/11748
+[PR-11753]: https://github.com/erlang/otp/pull/11753
+
+## Compiler 8.6.1.7
+
+### Fixed Bugs and Malfunctions
+
+- In rare circumstances, the type analysis pass of the compiler could run for many minutes.
+
+  Own Id: OTP-20365 Aux Id: [GH-11534], [PR-11566]
+
+- Certain uses of funs could crash the compiler. For example:
+  
+  ```
+  f() ->
+      F = fun Fn(0) -> 0; Fn(N) -> Fn(N - 1) end,
+      [F(X) || X <- [1, 2]].
+  ```
+  This has been corrected.
+
+  Own Id: OTP-20386 Aux Id: [GH-11619], [PR-11638]
+
+[GH-11534]: https://github.com/erlang/otp/issues/11534
+[PR-11566]: https://github.com/erlang/otp/pull/11566
+[GH-11619]: https://github.com/erlang/otp/issues/11619
+[PR-11638]: https://github.com/erlang/otp/pull/11638
+
+## Compiler 8.6.1.6
+
+### Fixed Bugs and Malfunctions
+
+- compiler: Fix bug in `beam_types:subtract/2` for bitstrings
+
+  Own Id: OTP-20312 Aux Id: [GH-11494], [PR-11503]
+
+[GH-11494]: https://github.com/erlang/otp/issues/11494
+[PR-11503]: https://github.com/erlang/otp/pull/11503
+
+## Compiler 8.6.1.5
+
+### Fixed Bugs and Malfunctions
+
+- In rare circumstances, optimization of boolean expressions could invert the boolean value.
+
+  Own Id: OTP-20140 Aux Id: [GH-11088], [PR-11089]
+
+[GH-11088]: https://github.com/erlang/otp/issues/11088
+[PR-11089]: https://github.com/erlang/otp/pull/11089
+
+## Compiler 8.6.1.4
+
+### Fixed Bugs and Malfunctions
+
+- The type inference for `maps:from_list/1` was incorrect: when the provided list was statically known to be bogus when non-empty (e.g. a list of atoms), the compiler assumed it would also fail when the list was empty.
+
+  Own Id: OTP-19506 Aux Id: [GH-9476], [PR-9481]
+
+- Fixed a bug in the type analysis pass that could erroneously eliminate code blocks.
+
+  Own Id: OTP-19931 Aux Id: [GH-10562], [PR-10569]
+
+- A binary as the value of a `-moduledoc()` attribute would be silently ignored.
+
+  Own Id: OTP-20065 Aux Id: [GH-10901], [PR-10904]
+
+[GH-9476]: https://github.com/erlang/otp/issues/9476
+[PR-9481]: https://github.com/erlang/otp/pull/9481
+[GH-10562]: https://github.com/erlang/otp/issues/10562
+[PR-10569]: https://github.com/erlang/otp/pull/10569
+[GH-10901]: https://github.com/erlang/otp/issues/10901
+[PR-10904]: https://github.com/erlang/otp/pull/10904
+
+## Compiler 8.6.1.3
+
+### Fixed Bugs and Malfunctions
+
+- Fixed broken type inference for lists:mapfoldl/r.
+
+  Own Id: OTP-19845 Aux Id: [GH-10354], [PR-10358]
+
+- Fix a compiler alias analysis bug that can generate unsafe code for repeated binary segments.
+
+  Own Id: OTP-19951 Aux Id: [PR-10588]
+
+[GH-10354]: https://github.com/erlang/otp/issues/10354
+[PR-10358]: https://github.com/erlang/otp/pull/10358
+[PR-10588]: https://github.com/erlang/otp/pull/10588
+
+## Compiler 8.6.1.2
+
+### Fixed Bugs and Malfunctions
+
+- In rare circumstances, the compiler could crash when compiling code using bit syntax construction.
+
+  Own Id: OTP-19722 Aux Id: [GH-10077], [PR-10090]
+
+[GH-10077]: https://github.com/erlang/otp/issues/10077
+[PR-10090]: https://github.com/erlang/otp/pull/10090
+
 ## Compiler 8.6.1.1
 
 ### Fixed Bugs and Malfunctions

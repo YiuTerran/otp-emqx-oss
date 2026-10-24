@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2022-2024. All Rights Reserved.
+%% Copyright Ericsson AB 2022-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -453,7 +453,7 @@ trace_profiles() ->
                       {status, 2}, {match_single_response, 4},
                       {designated_for_ocsp_signing, 1}]},
        {ssl, [{opt_stapling, 3}]},
-       {ssl_certificate, [{verify_cert_extensions, 5}]},
+       {ssl_certificate, [{verify_cert_extensions, 4}]},
        {ssl_test_lib, [{init_openssl_server, 3}, {openssl_server_loop, 3}]},
        {tls_client_connection, [{wait_stapling, 3}]},
        {dtls_client_connection, [{initial_hello, 3}, {hello, 3}, {connection, 3}]},
@@ -475,7 +475,7 @@ trace_profiles() ->
        {ssl_handshake, [{path_validate, 11}, {path_validation, 10},
                         {select_hashsign, 5}, {get_cert_params, 1},
                         {cert_curve, 3},
-                        {maybe_check_hostname, 4}]},
+                        {tls_verify_fun, 4}]},
        {ssl_pkix_db, [{decode_cert, 2}]},
        {tls_handshake_1_3, [{path_validation, 10}]},
        {tls_server_connection_1_3, [{init,1}]},
@@ -489,7 +489,7 @@ trace_profiles() ->
       fun(M, F, A) -> dbg:ctpl(M, F, A) end,
       [{tls_gen_connection_1_3, [{handle_key_update, 2}]},
        {tls_sender, [{init, 3}, {time_to_rekey, 6},
-                     {send_post_handshake_data, 4}]},
+                     {send_post_handshake_data, 5}]},
        {tls_v1, [{update_traffic_secret, 2}]}]},
      {rle, %% role
       fun(M, F, A) -> dbg:tpl(M, F, A, x) end,
@@ -503,7 +503,7 @@ trace_profiles() ->
       fun(M, F, A) -> dbg:ctpl(M, F, A) end,
       [{tls_server_session_ticket,
         [{handle_call,3}, {handle_cast,2}, {handle_info,2},
-         {terminate,2}, {start_link,7},
+         {terminate,2}, {start_link,8},
          {init,1}, {initial_state,1}, {validate_binder,5}, {stateful_store,0},
          {stateful_ticket_store,6}, {stateful_use,4}, {stateful_use,6},
          {stateful_usable_ticket,5}, {stateful_living_ticket,2},

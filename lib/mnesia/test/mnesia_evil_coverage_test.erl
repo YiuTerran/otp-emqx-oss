@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1996-2024. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -37,7 +37,8 @@
          replica_location/1, user_properties/1, unsupp_user_props/1,
          sorted_ets/1, index_cleanup/1,
          change_table_access_mode/1, change_table_load_order/1,
-         set_master_nodes/1, offline_set_master_nodes/1,
+         set_master_nodes/1, set_master_nodes_and_delete_table/1,
+         offline_set_master_nodes/1,
          dump_tables/1, dump_log/1, wait_for_tables/1, force_load_table/1,
          snmp_open_table/1, snmp_close_table/1, snmp_get_next_index/1,
          snmp_get_row/1, snmp_get_mnesia_key/1, snmp_update_counter/1,
@@ -50,6 +51,8 @@
          record_name_dirty_access_xets/1]).
 
 -export([info_check/8, index_size/1]).
+
+-compile({nowarn_deprecated_function, {mnesia_registry, create_table, 2}}).
 
 -define(cleanup(N, Config),
 	mnesia_test_lib:prepare_test_case([{reload_appls, [mnesia]}],
@@ -83,7 +86,8 @@ all() ->
 groups() -> 
     [{table_access_modifications, [],
       [change_table_access_mode, change_table_load_order,
-       set_master_nodes, offline_set_master_nodes]},
+       set_master_nodes, set_master_nodes_and_delete_table,
+       offline_set_master_nodes]},
      {table_sync, [],
       [dump_tables, dump_log, wait_for_tables,
        force_load_table]},
@@ -369,16 +373,17 @@ evil_delete_db_node(Config) when is_list(Config) ->
     Tab = evil_delete_db_node,
 
     ?match({atomic, ok}, mnesia:create_table(Tab, [{disc_copies, AllNodes}])),
-    
+    ?match({atomic, ok}, mnesia:create_table(foobar, [{ram_copies, [Node2, Node3]}])),
+
     ?match([], mnesia_test_lib:stop_mnesia([Node2, Node3])),
 
     ?match({atomic, ok}, mnesia:del_table_copy(schema, Node2)),
-    
+
     RemNodes = AllNodes -- [Node2],
-    
+
     ?match(RemNodes, mnesia:system_info(db_nodes)),
     ?match(RemNodes, mnesia:table_info(Tab, disc_copies)),
-    
+
     ?verify_mnesia([Node1], []).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -1318,6 +1323,22 @@ set_master_nodes(Config) when is_list(Config) ->
 
     ?verify_mnesia(Nodes, []).
 
+set_master_nodes_and_delete_table(suite) -> [];
+set_master_nodes_and_delete_table(Config) when is_list(Config) ->
+    [Node1] = Nodes = ?acquire_nodes(1, Config),
+    Tab = ?FUNCTION_NAME,
+    ?match({atomic, ok}, mnesia:create_table(Tab, [{disc_copies, [Node1]}])),
+
+    %% Set master nodes and immediately delete the table,
+    %% if lucky it could crash the mnesia_controller
+    spawn_link(fun() ->
+                       timer:sleep(1),
+                       mnesia:set_master_nodes(Tab, [Node1])
+               end),
+    ?match({atomic, ok}, mnesia:delete_table(Tab)),
+
+    ?verify_mnesia(Nodes, []).
+
 offline_set_master_nodes(suite) -> [];
 offline_set_master_nodes(Config) when is_list(Config) ->
     [Node] = Nodes = ?acquire_nodes(1, Config),
@@ -1438,20 +1459,44 @@ dump_log(N, Tester) when N > 0 ->
 dump_log(_, Tester) ->
     Tester ! finished.
 
-
-wait_for_tables(doc) -> 
+wait_for_tables(doc) ->
     ["Intf. test of wait_for_tables, see also force_load_table"];
 wait_for_tables(suite) -> [];
 wait_for_tables(Config) when is_list(Config) ->
     [Node1, Node2] = Nodes = ?acquire_nodes(2, Config),
-    Tab = wf_tab,
-    Schema = [{name, Tab}, {ram_copies, [Node1, Node2]}],
-    ?match({atomic, ok}, mnesia:create_table(Schema)),
-    ?match(ok, mnesia:wait_for_tables([wf_tab], infinity)),
+    Tabs = [list_to_atom("wf_tab_" ++ integer_to_list(N)) || N <- lists:seq(1, 500)],
+    Schema = [{ram_copies, [Node1, Node2]}],
+    [{atomic, ok} = mnesia:create_table(Tab, Schema) || Tab <- Tabs],
+    ?match(stopped,mnesia:stop()),
+
+    ?match(ok, mnesia:start()),
+    ?match(timeout, element(1, mnesia:wait_for_tables(Tabs, 0))),
+    Check = fun(Time) ->
+                    {Waited, ok} = timer:tc(mnesia, wait_for_tables, [Tabs, Time]),
+                    io:format("~w Waited: ~wms~n", [node(), Waited div 1000]),
+                    Waited div 1_000_000 < Time
+            end,
+    ?match(true, Check(timer:seconds(5))),
     ?match(ok, mnesia:wait_for_tables([], timer:seconds(5))),
-    ?match({timeout, [bad_tab]}, mnesia:wait_for_tables([bad_tab], timer:seconds(5))),
-    ?match(ok, mnesia:wait_for_tables([wf_tab], 0)),
+    ?match({timeout, [bad_tab]}, mnesia:wait_for_tables([bad_tab], timer:seconds(1))),
+    ?match(ok, mnesia:wait_for_tables([wf_tab_1], 0)),
     ?match({error,_}, mnesia:wait_for_tables([wf_tab], -1)),
+
+    ?match(stopped, erpc:call(Node2, mnesia, stop, [])),
+    fun Wait () ->  %% Sync node_down
+            case mnesia:table_info(schema, active_replicas) of
+                [Node1] -> ok;
+                _ ->
+                    timer:sleep(100),
+                    _ = mnesia_controller:get_info(1000),
+                    Wait()
+            end
+    end (),
+    {ok, foo, _} = mnesia:activate_checkpoint([{name, foo}, {max, Tabs}, {ram_overrides_dump, true}]),
+    ?match(ok, erpc:call(Node2, mnesia, start, [])),
+    ?match(true, erpc:call(Node2, fun() -> Check(5000) end)),
+    ?match(ok, mnesia:deactivate_checkpoint(foo)),
+
     ?verify_mnesia(Nodes, []).
 
 force_load_table(suite) -> [];
@@ -1467,7 +1512,7 @@ force_load_table(Config) when is_list(Config) ->
     mnesia_test_lib:kill_mnesia([Node2]),
     %%    timer:sleep(timer:seconds(5)),
     ?match(ok, mnesia:start()),
-    ?match({timeout, [Tab]}, mnesia:wait_for_tables([Tab], 5)),
+    ?match({timeout, [Tab]}, mnesia:wait_for_tables([Tab], 2)),
     ?match({'EXIT', _}, mnesia:dirty_read({Tab, 1})),
     ?match(yes, mnesia:force_load_table(Tab)),
     ?match([{Tab, 1, test_ok}], mnesia:dirty_read({Tab, 1})),

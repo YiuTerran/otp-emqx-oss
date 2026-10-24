@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2023-2024. All Rights Reserved.
+%% Copyright Ericsson AB 2023-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -119,6 +119,7 @@
 
 -include("dtls_connection.hrl").
 -include("dtls_handshake.hrl").
+-include("dtls_record.hrl").
 -include("ssl_alert.hrl").
 -include("ssl_cipher.hrl").
 -include("ssl_internal.hrl").
@@ -144,7 +145,7 @@
 -export([callback_mode/0,
          terminate/3,
          code_change/4,
-         format_status/2]).
+         format_status/1]).
 
 %% Tracing
 -export([handle_trace/3]).
@@ -204,7 +205,7 @@ initial_hello({call, From}, {start, Timeout},
 					Session#session.session_id, Renegotiation),
 
     MaxFragEnum = maps:get(max_frag_enum, Hello#client_hello.extensions, undefined),
-    ConnectionStates1 = ssl_record:set_max_fragment_length(MaxFragEnum, ConnectionStates0),
+    ConnectionStates1 = ssl_record:maybe_set_max_fragment_length(MaxFragEnum, ConnectionStates0),
     Version = Hello#client_hello.client_version,
     HelloVersion = dtls_record:hello_version(Version, Versions),
     State1 = dtls_gen_connection:prepare_flight(
@@ -327,6 +328,10 @@ hello(internal,  #change_cipher_spec{type = <<1>>}, State0) ->
     end;
 hello(state_timeout, Event, State) ->
     dtls_gen_connection:handle_state_timeout(Event, ?STATE(hello), State);
+hello(internal, {protocol_record, #ssl_tls{type = ?APPLICATION_DATA}},
+      #state{handshake_env = #handshake_env{renegotiation = {false, first}}} = State) ->
+    Alert = ?ALERT_REC(?FATAL, ?UNEXPECTED_MESSAGE, application_data_before_initial_handshake),
+    ssl_gen_statem:handle_own_alert(Alert,  ?STATE(hello), State);
 hello(info, Event, State) ->
     dtls_gen_connection:gen_info(Event, ?STATE(hello), State);
 hello(Type, Event, State) ->
@@ -360,6 +365,10 @@ abbreviated(internal = Type, #change_cipher_spec{} = Event,
     ConnectionStates = dtls_record:next_epoch(ConnectionStates1, read),
     gen_state(?STATE(abbreviated), Type, Event,
                   State#state{connection_states = ConnectionStates});
+abbreviated(internal, {protocol_record, #ssl_tls{type = ?APPLICATION_DATA}},
+            #state{handshake_env = #handshake_env{renegotiation = {false, first}}} = State) ->
+    Alert = ?ALERT_REC(?FATAL, ?UNEXPECTED_MESSAGE, application_data_before_initial_handshake),
+    ssl_gen_statem:handle_own_alert(Alert, ?STATE(abbreviated), State);
 abbreviated(Type, Event, State) ->
     gen_state(?STATE(abbreviated), Type, Event, State).
 
@@ -372,6 +381,10 @@ wait_stapling(enter, _Event, State0) ->
     {keep_state, State, Actions};
 wait_stapling(state_timeout, Event, State) ->
     dtls_gen_connection:handle_state_timeout(Event, ?STATE(wait_stapling), State);
+wait_stapling(internal, {protocol_record, #ssl_tls{type = ?APPLICATION_DATA}},
+              #state{handshake_env = #handshake_env{renegotiation = {false, first}}} = State) ->
+    Alert = ?ALERT_REC(?FATAL, ?UNEXPECTED_MESSAGE, application_data_before_initial_handshake),
+    ssl_gen_statem:handle_own_alert(Alert, ?STATE(wait_stapling), State);
 wait_stapling(info, Event, State) ->
     dtls_gen_connection:gen_info(Event, ?STATE(wait_stapling), State);
 wait_stapling(Type, Event, State) ->
@@ -403,6 +416,10 @@ certify(internal,  #change_cipher_spec{type = <<1>>}, State0) ->
     end;
 certify(state_timeout, Event, State) ->
     dtls_gen_connection:handle_state_timeout(Event, ?STATE(certify), State);
+certify(internal, {protocol_record, #ssl_tls{type = ?APPLICATION_DATA}},
+        #state{handshake_env = #handshake_env{renegotiation = {false, first}}} = State) ->
+    Alert = ?ALERT_REC(?FATAL, ?UNEXPECTED_MESSAGE, application_data_before_initial_handshake),
+    ssl_gen_statem:handle_own_alert(Alert, ?STATE(certify), State);
 certify(info, Event, State) ->
     dtls_gen_connection:gen_info(Event, ?STATE(certify), State);
 certify(Type, Event, State) ->
@@ -440,6 +457,10 @@ cipher(internal = Type, #finished{} = Event, #state{connection_states = Connecti
     catch throw:#alert{} = Alert ->
             ssl_gen_statem:handle_own_alert(Alert, cipher, State)
     end;
+cipher(internal, {protocol_record, #ssl_tls{type = ?APPLICATION_DATA}},
+       #state{handshake_env = #handshake_env{renegotiation = {false, first}}} = State) ->
+    Alert = ?ALERT_REC(?FATAL, ?UNEXPECTED_MESSAGE, application_data_before_initial_handshake),
+    ssl_gen_statem:handle_own_alert(Alert, ?STATE(cipher), State);
 cipher(Type, Event, State) ->
     gen_state(?STATE(cipher), Type, Event, State).
 
@@ -549,8 +570,8 @@ terminate(Reason, StateName, State) ->
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
 
-format_status(Type, Data) ->
-    ssl_gen_statem:format_status(Type, Data).
+format_status(Data) ->
+    ssl_gen_statem:format_status(Data).
 
 gen_state(StateName, Type, Event, State) ->
     try tls_dtls_client_connection:StateName(Type, Event, State)

@@ -4,7 +4,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2017-2024. All Rights Reserved.
+%% Copyright Ericsson AB 2017-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -666,10 +666,10 @@ gen_gc(Fd, GBP) ->
     io:put_chars(Fd,
                  "gc([]=R) -> R;\n"
                  "gc([CP]=R) when ?IS_CP(CP) -> R;\n"
-                 "gc([$\\r=CP|R0]) ->\n"
+                 "gc([$\\r=CP|R0] = Str) ->\n"
                  "    case cp(R0) of % Don't break CRLF\n"
                  "        [$\\n|R1] -> [[$\\r,$\\n]|R1];\n"
-                 "        T -> [CP|T]\n"
+                 "        _ -> Str  % Keep the tail binary\n"
                  "    end;\n"
                  "gc([CP1|T1]=T) when ?IS_CP(CP1), CP1 < 256 ->\n"
                  "    case T1 of\n"

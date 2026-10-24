@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2023-2024. All Rights Reserved.
+%% Copyright Ericsson AB 2023-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -128,7 +128,7 @@
 -export([callback_mode/0,
          terminate/3,
          code_change/4,
-         format_status/2]).
+         format_status/1]).
 
 %% Tracing
 -export([handle_trace/3]).
@@ -193,7 +193,13 @@ initial_hello({call, From}, {start, Timeout},
     %% also takes it into account if the ticket is suitable for sending early data not exceeding
     %% the max_early_data_size or if it can only be used for session resumption.
     {UseTicket, State1} = tls_client_connection_1_3:maybe_automatic_session_resumption(State0),
-    TicketData = tls_handshake_1_3:get_ticket_data(self(), SessionTickets, UseTicket),
+    TicketData =
+        case SessionTickets of
+            auto ->
+                (State1#state.handshake_env)#handshake_env.auto_ticket_data;
+            _ ->
+                tls_handshake_1_3:get_ticket_data(self(), SessionTickets, UseTicket)
+        end,
     OcspNonce = tls_handshake:ocsp_nonce(SslOpts),
     Hello0 = tls_handshake:client_hello(Host, Port, ConnectionStates0, SslOpts,
                                         Session#session.session_id,
@@ -214,7 +220,7 @@ initial_hello({call, From}, {start, Timeout},
     Hello2 = tls_handshake_1_3:maybe_add_binders(Hello1, TicketData, HelloVersion),
 
     MaxFragEnum = maps:get(max_frag_enum, Hello1#client_hello.extensions, undefined),
-    ConnectionStates1 = ssl_record:set_max_fragment_length(MaxFragEnum, ConnectionStates0),
+    ConnectionStates1 = ssl_record:maybe_set_max_fragment_length(MaxFragEnum, ConnectionStates0),
     State2 = State1#state{connection_states = ConnectionStates1,
                           connection_env = CEnv#connection_env{negotiated_version = HelloVersion}},
 
@@ -306,6 +312,11 @@ hello(internal, #server_hello{} = Hello,
         case tls_handshake:hello(Hello, SslOptions, ConnectionStates0, Renegotiation, OldId) of
             %% Legacy TLS 1.2 and older
             {Version, NewId, ConnectionStates, ProtoExt, Protocol, StaplingState} ->
+                %% A TLS-1.3 client with session_tickets=auto may have offered a
+                %% ticket that the server ignored by downgrading to TLS-1.2. The
+                %% ticket was already taken out of the store when it was offered
+                %% (single-use, RFC 8446 C.4), so there is nothing to release
+                %% here; the ticket is simply consumed by the attempt.
                 tls_dtls_client_connection:handle_session(
                   Hello, Version, NewId, ConnectionStates, ProtoExt, Protocol,
                   State#state{
@@ -327,6 +338,10 @@ hello(internal, #server_hello{} = Hello,
     catch throw:#alert{} = Alert ->
             ssl_gen_statem:handle_own_alert(Alert, ?STATE(hello), State)
     end;
+hello(internal, {protocol_record, #ssl_tls{type = ?APPLICATION_DATA}},
+      #state{handshake_env = #handshake_env{renegotiation = {false, first}}} = State) ->
+    Alert = ?ALERT_REC(?FATAL, ?UNEXPECTED_MESSAGE, application_data_before_initial_handshake),
+    ssl_gen_statem:handle_own_alert(Alert,  ?STATE(hello), State);
 hello(info, Event, State) ->
     tls_gen_connection:gen_info(Event, ?STATE(hello), State);
 hello(Type, Event, State) ->
@@ -343,6 +358,10 @@ user_hello(Type, Event, State) ->
 -spec abbreviated(gen_statem:event_type(), term(), #state{}) ->
 			 gen_statem:state_function_result().
 %%--------------------------------------------------------------------
+abbreviated(internal, {protocol_record, #ssl_tls{type = ?APPLICATION_DATA}},
+            #state{handshake_env = #handshake_env{renegotiation = {false, first}}} = State) ->
+    Alert = ?ALERT_REC(?FATAL, ?UNEXPECTED_MESSAGE, application_data_before_initial_handshake),
+    ssl_gen_statem:handle_own_alert(Alert, ?STATE(abbreviated), State);
 abbreviated(info, Event, State) ->
     tls_gen_connection:gen_info(Event, ?STATE(abbreviated), State);
 abbreviated(Type, Event, State) ->
@@ -352,6 +371,10 @@ abbreviated(Type, Event, State) ->
 -spec wait_stapling(gen_statem:event_type(), term(), #state{}) ->
           gen_statem:state_function_result().
 %%--------------------------------------------------------------------
+wait_stapling(internal, {protocol_record, #ssl_tls{type = ?APPLICATION_DATA}},
+              #state{handshake_env = #handshake_env{renegotiation = {false, first}}} = State) ->
+    Alert = ?ALERT_REC(?FATAL, ?UNEXPECTED_MESSAGE, application_data_before_initial_handshake),
+    ssl_gen_statem:handle_own_alert(Alert, ?STATE(wait_stapling), State);
 wait_stapling(info, Event, State) ->
     tls_gen_connection:gen_info(Event, ?STATE(wait_stapling), State);
 wait_stapling(Type, Event, State) ->
@@ -361,6 +384,10 @@ wait_stapling(Type, Event, State) ->
 -spec certify(gen_statem:event_type(), term(), #state{}) ->
 		     gen_statem:state_function_result().
 %%--------------------------------------------------------------------
+certify(internal, {protocol_record, #ssl_tls{type = ?APPLICATION_DATA}},
+        #state{handshake_env = #handshake_env{renegotiation = {false, first}}} = State) ->
+    Alert = ?ALERT_REC(?FATAL, ?UNEXPECTED_MESSAGE, application_data_before_initial_handshake),
+    ssl_gen_statem:handle_own_alert(Alert, ?STATE(certify), State);
 certify(info, Event, State) ->
     tls_gen_connection:gen_info(Event, ?STATE(certify), State);
 certify(Type, Event, State) ->
@@ -370,6 +397,10 @@ certify(Type, Event, State) ->
 -spec cipher(gen_statem:event_type(), term(), #state{}) ->
 		    gen_statem:state_function_result().
 %%--------------------------------------------------------------------
+cipher(internal, {protocol_record, #ssl_tls{type = ?APPLICATION_DATA}},
+       #state{handshake_env = #handshake_env{renegotiation = {false, first}}} = State) ->
+    Alert = ?ALERT_REC(?FATAL, ?UNEXPECTED_MESSAGE, application_data_before_initial_handshake),
+    ssl_gen_statem:handle_own_alert(Alert, ?STATE(cipher), State);
 cipher(info, Event, State) ->
     tls_gen_connection:gen_info(Event, ?STATE(cipher), State);
 cipher(Type, Event, State) ->
@@ -462,8 +493,8 @@ callback_mode() ->
 terminate(Reason, StateName, State) ->
     ssl_gen_statem:terminate(Reason, StateName, State).
 
-format_status(Type, Data) ->
-    ssl_gen_statem:format_status(Type, Data).
+format_status(Data) ->
+    ssl_gen_statem:format_status(Data).
 
 code_change(_OldVsn, StateName, State, _) ->
     {ok, StateName, State}.

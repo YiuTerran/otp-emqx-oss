@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2004-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2004-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -124,7 +124,15 @@ setup_known_host/3,
 get_addr_str/0,
 file_base_name/2,
 kex_strict_negotiated/2,
-event_logged/3
+event_logged/3,
+server_host/1,
+server_port/1,
+server_pid/1,
+system_dir/1,
+user_dir/1,
+get_public_key_algorithms_with_valid_host_key/1,
+get_public_key_algorithms_with_valid_host_key/2,
+remove_comment/1
         ]).
 %% logger callbacks and related helpers
 -export([log/2,
@@ -142,6 +150,9 @@ event_logged/3
         "{ok, _} = ssh:connect(\"localhost\", 22, "
         "[{password,\"\"},{silently_accept_hosts, true}, "
         "{save_accepted_host, false}, {user_interaction, false}]).").
+
+-define(HAS_HOST_KEY(Alg, Options),
+        try ssh_transport:get_host_key(Alg, Options), true catch _:_:_ -> false end).
 
 %%%----------------------------------------------------------------
 connect(Port, Options) when is_integer(Port) ->
@@ -1218,10 +1229,12 @@ setup_all_user_keys(DataDir, UserDir) ->
 setup_user_key(SshAlg, DataDir, UserDir) ->
     file:make_dir(UserDir),
     %% Copy private user key to user's dir
-    {ok,_} = file:copy(filename:join(DataDir, file_base_name(user_src,SshAlg)),
-                       filename:join(UserDir, file_base_name(user,SshAlg))),
+    {ok, Priv0} = file:read_file(filename:join(DataDir, file_base_name(user_src,SshAlg))),
+    Priv = remove_comment(Priv0),
+    ok = file:write_file(filename:join(UserDir, file_base_name(user,SshAlg)), Priv),
     %% Setup authorized_keys in user's dir
-    {ok,Pub} = file:read_file(filename:join(DataDir, file_base_name(user_src,SshAlg)++".pub")),
+    {ok,Pub0} = file:read_file(filename:join(DataDir, file_base_name(user_src,SshAlg)++".pub")),
+    Pub = remove_comment(Pub0),
     ok = file:write_file(filename:join(UserDir, "authorized_keys"),
                          io_lib:format("~n~s~n",[Pub]),
                          [append]),
@@ -1239,19 +1252,25 @@ setup_host_key_create_dir(SshAlg, DataDir, BaseDir) ->
 setup_host_key(SshAlg, DataDir, SysDir) ->
     mk_dir_path(SysDir),
     %% Copy private host key to system's dir
-    {ok,_} = file:copy(filename:join(DataDir, file_base_name(system_src,SshAlg)),
-                       filename:join(SysDir,  file_base_name(system,SshAlg))),
+    {ok,Priv0} = file:read_file(filename:join(DataDir, file_base_name(system_src,SshAlg))),
+    Priv = remove_comment(Priv0),
+    ok = file:write_file(filename:join(SysDir,  file_base_name(system,SshAlg)), Priv),
     ?ct_log_show_file( filename:join(SysDir,  file_base_name(system,SshAlg)) ),
     ok.
 
 setup_known_host(SshAlg, DataDir, UserDir) ->
-    {ok,Pub} = file:read_file(filename:join(DataDir, file_base_name(system_src,SshAlg)++".pub")),
+    {ok,Pub0} = file:read_file(filename:join(DataDir, file_base_name(system_src,SshAlg)++".pub")),
+    Pub = remove_comment(Pub0),
     S = lists:join(" ", lists:reverse(tl(lists:reverse(string:tokens(binary_to_list(Pub), " "))))),
     ok = file:write_file(filename:join(UserDir, "known_hosts"),
                          io_lib:format("~p~n",[S])),
     ?ct_log_show_file( filename:join(UserDir, "known_hosts") ),
     ok.
 
+remove_comment(Bin) ->
+    Lines = string:split(Bin, "\n", all),
+    FilteredLines = [L || L <- Lines, string:prefix(L, "#") == nomatch],
+    list_to_binary(lists:join("\n", FilteredLines)).
 
 get_addr_str() ->
     {ok, Hostname} = inet:gethostname(),
@@ -1373,3 +1392,25 @@ log(LogEvent = #{level:=_Level,msg:=_Msg,meta:=_Meta},
     #{test_ref := TestRef, recipient := Recipient}) ->
     Recipient ! {TestRef, LogEvent},
     ok.
+
+server_pid(Config)  -> element(1,?v(server,Config)).
+server_host(Config) -> element(2,?v(server,Config)).
+server_port(Config) -> element(3,?v(server,Config)).
+
+%%%----------------------------------------------------------------
+system_dir(Config) -> filename:join(proplists:get_value(priv_dir, Config), system).
+
+user_dir(Config) -> proplists:get_value(priv_dir, Config).
+
+%%%----------------------------------------------------------------
+get_public_key_algorithms_with_valid_host_key(Config) ->
+    get_public_key_algorithms_with_valid_host_key(Config, no_options).
+get_public_key_algorithms_with_valid_host_key(Config, no_options) ->
+    #{key_cb := KeyCb} = ssh_options:default(server),
+    #{default := Default} = KeyCb,
+    get_public_key_algorithms_with_valid_host_key(Config, [{key_cb, Default}]);
+get_public_key_algorithms_with_valid_host_key(Config, Options) ->
+    KeyCb = ?v(key_cb, Options),
+    Opts = #{key_cb => KeyCb, key_cb_options => [{system_dir, system_dir(Config)}]},
+    PubKeyAlgs = ssh_transport:supported_algorithms(public_key),
+    lists:filter(fun(Alg) -> ?HAS_HOST_KEY(Alg, Opts) end, PubKeyAlgs).

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2009-2024. All Rights Reserved.
+%% Copyright Ericsson AB 2009-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -154,8 +154,8 @@ profile_name(_Prefix, Profile) when is_pid(Profile) ->
                 , HttpBodyResult}
               | RequestId
               | saved_to_file,
-      HttpBodyResult :: uri_string:uri_string() | binary(),
-      HttpVersion :: uri_string:uri_string(),
+      HttpBodyResult :: string() | binary(),
+      HttpVersion :: string(),
       StatusCode :: non_neg_integer(),
       HttpHeader :: { Field :: [byte()]
                     , Value :: binary() | iolist()},
@@ -174,11 +174,11 @@ request(Url) ->
               | saved_to_file,
       HttpHeader :: { Field :: [byte()]
                     , Value :: binary() | iolist()},
-      HttpBodyResult :: uri_string:uri_string() | binary(),
+      HttpBodyResult :: string() | binary(),
       StatusLine :: { HttpVersion
                     , StatusCode
                     , string()},
-      HttpVersion :: uri_string:uri_string(),
+      HttpVersion :: string(),
       StatusCode  :: non_neg_integer(),
       RequestId :: any().
 request(Url, Profile) ->
@@ -198,7 +198,7 @@ request(Url, Profile) ->
                  , [HttpHeader] }
                | { uri_string:uri_string()
                  , [ HttpHeader ]
-                 , ContentType::uri_string:uri_string()
+                 , ContentType::string()
                  , HttpBody},
       HttpBody :: iolist()
                 | binary()
@@ -223,7 +223,9 @@ request(Url, Profile) ->
                         | {headers_as_is, boolean()}
                         | {socket_opts, [SocketOpt]}
                         | {receiver, Receiver}
-                        | {ipv6_host_with_brackets, boolean()},
+                        | {ipv6_host_with_brackets, boolean()}
+                        | {max_header_size, MaxSize}
+                        | {max_body_size, MaxSize},
       StreamTo :: none | self | {self, once} | file:name_all(),
       SocketOpt :: term(),
       BodyFormat  :: string | binary,
@@ -232,6 +234,7 @@ request(Url, Profile) ->
                   | { ReceiverModule::atom()
                     , ReceiverFunction::atom()
                     , ReceiverArgs::list()},
+      MaxSize :: non_neg_integer() | nolimit,
       Result :: { StatusLine , [HttpHeader], HttpBodyResult}
               | { StatusCode, HttpBodyResult}
               | RequestId
@@ -240,10 +243,10 @@ request(Url, Profile) ->
       StatusLine :: { HttpVersion
                     , StatusCode
                     , string()},
-      HttpVersion :: uri_string:uri_string(),
+      HttpVersion :: string(),
       HttpHeader :: { Field :: [byte()]
                     , Value :: binary() | iolist()},
-      HttpBodyResult :: uri_string:uri_string() | binary(),
+      HttpBodyResult :: string() | binary(),
       RequestId :: any().
 request(Method, Request, HttpOptions, Options) ->
     request(Method, Request, HttpOptions, Options, default_profile()).
@@ -407,6 +410,28 @@ Options details:
   (`true`) or stripped (`false`).
 
   Default is `false`.
+
+  [](){: #opt_max_header_size }
+
+- **`max_header_size`** - Maximum total number of bytes allowed for the response
+  headers (cumulative across all header lines). If the server sends headers
+  exceeding this limit, the request fails with
+  `{error, {header_too_long, {max, MaxSize}}}`.
+
+  The atom `nolimit` disables the check (not recommended).
+
+  Default is `10240` (same as the [`max_header_size`](`m:httpd#prop_max_header_size`)
+  configuration for `httpd`).
+
+  [](){: #opt_max_body_size }
+
+- **`max_body_size`** - Maximum number of bytes allowed for the response body.
+  If the `Content-Length` of the response exceeds this limit, the request fails
+  with `{error, body_too_big}`.
+
+  The atom `nolimit` disables the check.
+
+  Default is `nolimit`.
 """.
 -doc(#{since => <<"OTP R13B04">>}).
 -spec request(Method, Request, HttpOptions, Options, Profile) -> {ok, Result} | {error, term()} when
@@ -415,7 +440,7 @@ Options details:
                  , [HttpHeader] }
                | { uri_string:uri_string()
                  , [ HttpHeader ]
-                 , ContentType::uri_string:uri_string()
+                 , ContentType::string()
                  , HttpBody},
       HttpBody :: iolist()
                 | binary()
@@ -442,7 +467,9 @@ Options details:
                      | {headers_as_is, boolean()}
                      | {socket_opts, [SocketOpt]}
                      | {receiver, Receiver}
-                     | {ipv6_host_with_brackets, boolean()},
+                     | {ipv6_host_with_brackets, boolean()}
+                     | {max_header_size, MaxSize}
+                     | {max_body_size, MaxSize},
       StreamTo :: none | self | {self, once} | file:name_all(),
       BodyFormat  :: string | binary,
       SocketOpt :: term(),
@@ -451,8 +478,9 @@ Options details:
                   | { ReceiverModule::atom()
                     , ReceiverFunction::atom()
                     , ReceiverArgs::list()},
+      MaxSize :: non_neg_integer() | nolimit,
       Profile :: atom() | pid(),
-      HttpVersion :: uri_string:uri_string(),
+      HttpVersion :: string(),
       Result :: {StatusLine
                 , [HttpHeader]
                 , HttpBodyResult}
@@ -462,7 +490,7 @@ Options details:
               | saved_to_file,
       StatusLine :: { HttpVersion, StatusCode, string()},
       StatusCode  :: non_neg_integer(),
-      HttpBodyResult :: uri_string:uri_string() | binary(),
+      HttpBodyResult :: string() | binary(),
       RequestId :: any().
 request(Method, Request, HTTPOptions, Options, Profile)
   when is_atom(Profile) orelse is_pid(Profile) ->
@@ -568,7 +596,7 @@ cancel_request(RequestId, Profile)
       PipelineTimeout :: integer(),
       CookieMode :: enabled | disabled | verify,
       IpFamily :: inet | inet6 | local | inet6fb4,
-      IpAddressDesc :: uri_string:uri_string(),
+      IpAddressDesc :: string(),
       IpAddress :: inet:ip_address(),
       VerboseMode :: false | verbose | debug | trace,
       SocketOpts :: [SocketOpt],
@@ -576,7 +604,7 @@ cancel_request(RequestId, Profile)
       UnixSocket :: file:name_all(),
       Reason :: term(),
       DomainDesc :: string(),
-      HostName :: uri_string:uri_string().
+      HostName :: string().
 set_options(Options) ->
     set_options(Options, default_profile()).
 
@@ -690,13 +718,13 @@ Sets options to be used for subsequent requests.
       PipelineTimeout :: integer(),
       CookieMode :: enabled | disabled | verify,
       IpFamily :: inet | inet6 | local | inet6fb4,
-      IpAddressDesc :: uri_string:uri_string(),
+      IpAddressDesc :: string(),
       IpAddress :: inet:ip_address(),
       VerboseMode :: false | verbose | debug | trace,
       UnixSocket :: string(),
       Reason :: term(),
       DomainDesc :: string(),
-      HostName :: uri_string:uri_string().
+      HostName :: string().
 set_options(Options, Profile) when is_atom(Profile) orelse is_pid(Profile) ->
     IsInetsRunning = [Application || {inets, _, _} = Application <- application:which_applications()] =/= [],
     case IsInetsRunning of
@@ -1327,7 +1355,9 @@ maybe_format_body(BinBody, Options) ->
                         | {headers_as_is, boolean()}
                         | {socket_opts, [SocketOpt]}
                         | {receiver, Receiver}
-                        | {ipv6_host_with_brackets, boolean()},
+                        | {ipv6_host_with_brackets, boolean()}
+                        | {max_header_size,         MaxSize}
+                        | {max_body_size,           MaxSize},
       BodyFormat  :: string | binary,
       StreamTo :: none | self | {self, once} | file:name_all(),
       SocketOpt :: term(),
@@ -1335,7 +1365,8 @@ maybe_format_body(BinBody, Options) ->
                   | fun((term()) -> term())
                   | { ReceiverModule::atom()
                     , ReceiverFunction::atom()
-                    , ReceiverArgs::list()}.
+                    , ReceiverArgs::list()},
+      MaxSize :: non_neg_integer() | nolimit.
 %% This options is a workaround for http servers that do not follow the 
 %% http standard and have case sensitive header parsing. Should only be
 %% used if there is no other way to communicate with the server or for
@@ -1520,16 +1551,26 @@ request_options_defaults() ->
 
     VerifyBrackets = VerifyBoolean,
 
+    VerifyIntegerNoLimit =
+        fun(nolimit) ->
+                ok;
+           (Value) when
+                  is_integer(Value), Value > 0 ->
+                ok
+        end,
+
     [
-     {sync,                    true,      VerifySync}, 
-     {stream,                  none,      VerifyStream},
-     {body_format,             string,    VerifyBodyFormat},
-     {full_result,             true,      VerifyFullResult},
-     {headers_as_is,           false,     VerifyHeaderAsIs},
-     {receiver,                alias(),    VerifyReceiver},
-     {socket_opts,             undefined, VerifySocketOpts},
-     {ipv6_host_with_brackets, false,     VerifyBrackets}
-    ]. 
+     {sync,                    true,                       VerifySync},
+     {stream,                  none,                       VerifyStream},
+     {body_format,             string,                     VerifyBodyFormat},
+     {full_result,             true,                       VerifyFullResult},
+     {headers_as_is,           false,                      VerifyHeaderAsIs},
+     {receiver,                alias(),                    VerifyReceiver},
+     {socket_opts,             undefined,                  VerifySocketOpts},
+     {ipv6_host_with_brackets, false,                      VerifyBrackets},
+     {max_header_size,         ?HTTP_MAX_HEADER_SIZE,      VerifyIntegerNoLimit},
+     {max_body_size,           ?HTTP_MAX_BODY_SIZE,        VerifyIntegerNoLimit}
+    ].
 
 request_options(Options) ->
     Defaults = request_options_defaults(), 
@@ -1575,7 +1616,9 @@ request_options([{Key, DefaultVal, Verify} | Defaults], Options, Acc) ->
                      | {headers_as_is, boolean()}
                      | {socket_opts, [SocketOpt]}
                      | {receiver, Receiver}
-                     | {ipv6_host_with_brackets, boolean()},
+                     | {ipv6_host_with_brackets, boolean()}
+                     | {max_header_size, MaxSize}
+                     | {max_body_size, MaxSize},
       StreamTo :: none | self | {self, once} | file:name_all(),
       BodyFormat  :: string | binary,
       SocketOpt :: term(),
@@ -1584,7 +1627,8 @@ request_options([{Key, DefaultVal, Verify} | Defaults], Options, Acc) ->
                   | fun((term()) -> term())
                   | { ReceiverModule::atom()
                     , ReceiverFunction::atom()
-                    , ReceiverArgs::list()}.
+                    , ReceiverArgs::list()},
+      MaxSize :: non_neg_integer() | nolimit.
 request_options_sanity_check(Opts) ->
     case proplists:get_value(sync, Opts) of
 	Sync when (Sync =:= true) ->
@@ -1949,13 +1993,24 @@ header_record([{Key, Val} | Rest], RequestHeaders, Host, Version) ->
 				   RequestHeaders#http_request_h.other]}, 
 		  Host, Version).
 
-validate_headers(RequestHeaders = #http_request_h{te = undefined}, Host, 
-		 "HTTP/1.1" = Version) ->
-    validate_headers(RequestHeaders#http_request_h{te = ""}, Host, 
-		     "HTTP/1.1" = Version);
 validate_headers(RequestHeaders = #http_request_h{host = undefined}, 
 		 Host, "HTTP/1.1" = Version) ->
     validate_headers(RequestHeaders#http_request_h{host = Host}, Host, Version);
+validate_headers(RequestHeaders = #http_request_h{te = TE, connection = Conn}, _, "HTTP/1.1") ->
+    case TE of
+        undefined ->
+            RequestHeaders;
+        _TEValue ->
+            NewConn = case Conn of
+                undefined -> "TE";
+                ExistingConn ->
+                    case lists:member("te", http_util:connection_tokens(ExistingConn)) of
+                        true -> ExistingConn;
+                        false -> ExistingConn ++ ", TE"
+                    end
+            end,
+            RequestHeaders#http_request_h{connection = NewConn}
+    end;
 validate_headers(RequestHeaders, _, _) ->
     RequestHeaders.
 

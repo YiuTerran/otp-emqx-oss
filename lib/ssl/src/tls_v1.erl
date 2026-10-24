@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2007-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2007-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -724,8 +724,6 @@ psk_anon_exclusive(?TLS_1_2) ->
      ?TLS_ECDHE_PSK_WITH_AES_128_CCM_8_SHA256,
      ?TLS_DHE_PSK_WITH_AES_128_GCM_SHA256,
      ?TLS_PSK_WITH_AES_128_GCM_SHA256,
-     ?TLS_ECDHE_PSK_WITH_AES_128_GCM_SHA256,
-     ?TLS_ECDHE_PSK_WITH_AES_128_CCM_8_SHA256,
      ?TLS_DHE_PSK_WITH_AES_128_CCM,
      ?TLS_PSK_DHE_WITH_AES_128_CCM_8,
      ?TLS_PSK_WITH_AES_128_CCM,
@@ -1163,8 +1161,12 @@ is_pair(Hash, ecdsa, Hashs) ->
     AtLeastSha = Hashs -- [md2,md4,md5],
     lists:member(Hash, AtLeastSha);
 is_pair(Hash, rsa, Hashs) ->
-    AtLeastMd5 = Hashs -- [md2,md4],
-    lists:member(Hash, AtLeastMd5);
+    %% MD5 is not a supported standalone signature hash for (D)TLS 1.2
+    %% signature_algorithms (it only ever appears as the combined md5sha
+    %% construct in pre-TLS-1.2 RSA signatures, which does not go through
+    %% is_pair/3). Guard against miss-configuration.
+    AtLeastSha = Hashs -- [md2,md4,md5],
+    lists:member(Hash, AtLeastSha);
 is_pair(_,_,_) ->
     false.
 

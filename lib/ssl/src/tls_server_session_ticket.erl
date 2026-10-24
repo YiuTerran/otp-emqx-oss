@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2007-2024. All Rights Reserved.
+%% Copyright Ericsson AB 2007-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -32,19 +32,17 @@
 -include("ssl_cipher.hrl").
 
 %% API
--export([start_link/7,
+-export([start_link/8,
          new/4,
          use/4
         ]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-         terminate/2, code_change/3, format_status/2]).
+         terminate/2, code_change/3, format_status/1]).
 
 %% Tracing
 -export([handle_trace/3]).
-
--define(SERVER, ?MODULE).
 
 -record(state, {
                 stateless,
@@ -52,40 +50,53 @@
                 nonce,
                 lifetime,
                 max_early_data_size,
+                early_data_enabled,
                 listen_monitor
                }).
 
 %%%===================================================================
 %%% API
 %%%===================================================================
--spec start_link(term(), Mode, integer(), integer(), integer(), tuple(), Seed) ->
+-spec start_link(term(), Mode, integer(), integer(), integer(), tuple(), Seed, boolean()) ->
                       {ok, Pid :: pid()} |
                       {error, Error :: {already_started, pid()}} |
                       {error, Error :: term()} |
                       ignore
     when Mode :: stateful | stateless |  stateful_with_cert | stateless_with_cert,
          Seed :: undefined | binary().
-start_link(Listener, Mode1, Lifetime, TicketStoreSize, MaxEarlyDataSize, AntiReplay, Seed) ->
+start_link(Listener, Mode1, Lifetime, TicketStoreSize, MaxEarlyDataSize, AntiReplay,
+           Seed, EarlyDataEnabled) ->
     Mode = case Mode1 of
                stateful_with_cert -> stateful;
                stateless_with_cert -> stateless;
                _ -> Mode1
     end,
     gen_server:start_link(?MODULE, [Listener, Mode, Lifetime, TicketStoreSize,
-                                    MaxEarlyDataSize, AntiReplay, Seed], []).
+                                    MaxEarlyDataSize, AntiReplay, Seed,
+                                    EarlyDataEnabled], []).
 
 new(Pid, Prf, MasterSecret, PeerCert) ->
-    gen_server:call(Pid, {new_session_ticket, Prf, MasterSecret, PeerCert}, infinity).
+    Request = {new_session_ticket, Prf, MasterSecret, PeerCert},
+    case call(Pid, Request) of
+        {error, closed} ->
+            no_ticket;
+        Result ->
+            Result
+    end.
 
 use(Pid, Identifiers, Prf, HandshakeHist) ->
-    gen_server:call(Pid, {use_ticket, Identifiers, Prf, HandshakeHist}, 
-                    infinity).
-
+    case call(Pid, {use_ticket, Identifiers, Prf, HandshakeHist}) of
+        {error, closed} ->
+            %% Server died, old tickets can not be used (state is lost)
+            %% new accept call will start new ticket handler
+            {ok, undefined};
+        Result ->
+            Result
+    end.
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
-
--spec init(Args :: term()) -> {ok, State :: term()}.                             
+-spec init(Args :: term()) -> {ok, State :: term()}.
 init([Listener | Args]) ->
     process_flag(trap_exit, true),
     proc_lib:set_label({tls_13_server_session_tickets, Listener}),
@@ -106,10 +117,12 @@ handle_call({new_session_ticket, Prf, MasterSecret, PeerCert}, _From,
             #state{nonce = Nonce, 
                    lifetime = LifeTime,
                    max_early_data_size = MaxEarlyDataSize,
+                   early_data_enabled = EarlyDataEnabled,
                    stateful = #{id_generator := IdGen}} = State0) -> 
     Id = stateful_psk_ticket_id(IdGen),
     PSK = tls_v1:pre_shared_key(MasterSecret, ticket_nonce(Nonce), Prf),
-    SessionTicket = new_session_ticket(Id, Nonce, LifeTime, MaxEarlyDataSize),
+    SessionTicket = new_session_ticket(Id, Nonce, LifeTime, MaxEarlyDataSize,
+                                       EarlyDataEnabled),
     State = stateful_ticket_store(Id, SessionTicket, Prf, PSK, PeerCert, State0),
     {reply, SessionTicket, State};
 handle_call({new_session_ticket, Prf, MasterSecret, PeerCert}, _From,
@@ -163,23 +176,41 @@ terminate(_Reason, _State) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
-
--spec format_status(Opt :: normal | terminate,
-                    Status :: list()) -> Status :: term().
-format_status(_Opt, Status) ->
-    Status.
+%%====================================================================
+%% Log handling
+%%====================================================================
+-spec format_status(map()) -> map().
+format_status(Status) ->
+    maps:map(
+      fun(state, State) ->
+              State#state{stateful = ?SECRET_PRINTOUT,
+                          stateless = ?SECRET_PRINTOUT,
+                          nonce = ?SECRET_PRINTOUT};
+         (_,Value) ->
+              Value
+      end, Status).
 
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-initial_state([stateless, Lifetime, _, MaxEarlyDataSize, undefined, Seed]) ->
+call(Pid, Msg) ->
+    try gen_server:call(Pid, Msg, infinity)
+    catch
+        exit:{noproc, _} ->
+            {error, closed}
+    end.
+
+initial_state([stateless, Lifetime, _, MaxEarlyDataSize, undefined, Seed,
+               EarlyDataEnabled]) ->
     #state{nonce = 0,
            stateless = #{seed => stateless_seed(Seed),
                          window => undefined},
            lifetime = Lifetime,
-           max_early_data_size = MaxEarlyDataSize
+           max_early_data_size = MaxEarlyDataSize,
+           early_data_enabled = EarlyDataEnabled
           };
-initial_state([stateless, Lifetime, _, MaxEarlyDataSize, {Window, K, M}, Seed]) ->
+initial_state([stateless, Lifetime, _, MaxEarlyDataSize, {Window, K, M}, Seed,
+               EarlyDataEnabled]) ->
     erlang:send_after(Window * 1000, self(), rotate_bloom_filters),
     #state{nonce = 0,
            stateless = #{bloom_filter => tls_bloom_filter:new(K, M),
@@ -187,14 +218,17 @@ initial_state([stateless, Lifetime, _, MaxEarlyDataSize, {Window, K, M}, Seed]) 
                          seed => stateless_seed(Seed),
                          window => Window},
            lifetime = Lifetime,
-           max_early_data_size = MaxEarlyDataSize
+           max_early_data_size = MaxEarlyDataSize,
+           early_data_enabled = EarlyDataEnabled
           };
-initial_state([stateful, Lifetime, TicketStoreSize, MaxEarlyDataSize|_]) ->
+initial_state([stateful, Lifetime, TicketStoreSize, MaxEarlyDataSize, _AntiReplay,
+               _Seed, EarlyDataEnabled]) ->
     %% statfeful servers replay
     %% protection is that it saves
     %% all valid tickets
     #state{lifetime = Lifetime,
            max_early_data_size = MaxEarlyDataSize,
+           early_data_enabled = EarlyDataEnabled,
            nonce = 0,
            stateful = #{db => stateful_store(),                    
                         max => TicketStoreSize,
@@ -220,14 +254,21 @@ ticket_nonce(I) ->
 
 new_session_ticket_base(#state{nonce = Nonce,
                                lifetime = Lifetime,
-                               max_early_data_size = MaxEarlyDataSize}) ->
-    new_session_ticket(undefined, Nonce, Lifetime, MaxEarlyDataSize).
+                               max_early_data_size = MaxEarlyDataSize,
+                               early_data_enabled = EarlyDataEnabled}) ->
+    new_session_ticket(undefined, Nonce, Lifetime, MaxEarlyDataSize,
+                       EarlyDataEnabled).
 
-new_session_ticket(Id, Nonce, Lifetime, MaxEarlyDataSize) ->
+new_session_ticket(Id, Nonce, Lifetime, MaxEarlyDataSize, EarlyDataEnabled) ->
     TicketAgeAdd = ticket_age_add(),
-    Extensions = #{early_data =>
-                       #early_data_indication_nst{
-                          indication = MaxEarlyDataSize}},
+    Extensions = case EarlyDataEnabled of
+                     true ->
+                         #{early_data =>
+                               #early_data_indication_nst{
+                                  indication = MaxEarlyDataSize}};
+                     false ->
+                         #{}
+                 end,
     #new_session_ticket{
        ticket = Id,
        ticket_lifetime = Lifetime,
@@ -405,8 +446,6 @@ stateless_usable_ticket(#stateless_ticket{hash = Prf,
             false
     end.
 
-stateless_living_ticket(0, _, _, _, _) ->
-    true;
 %% If `anti_replay` is not enabled, then a ticket is considered to be living
 %% if it has not exceeded its lifetime.
 %%

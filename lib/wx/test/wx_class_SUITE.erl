@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2008-2023. All Rights Reserved.
+%% Copyright Ericsson AB 2008-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -147,6 +147,9 @@ treeCtrl(Config) ->
     ?m(true, wxTreeCtrl:isTreeItemIdOk(Item1)),
     ?m({0, _}, wxTreeCtrl:hitTest(Tree, {X0+W0+W0, Y0+H0+4*H0})),
     ?m(false, wxTreeCtrl:isTreeItemIdOk(0)),
+
+    {N, Sels} = wxTreeCtrl:getSelections(Tree),
+    N = length(Sels),
 
     wxFrame:connect(Tree, command_tree_item_expanded),
     wxFrame:connect(Tree, command_tree_item_collapsed),

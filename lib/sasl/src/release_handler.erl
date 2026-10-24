@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1996-2024. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -1154,8 +1154,9 @@ be done by [`install_release/1,2`](`install_release/1`).
                                App :: atom(),
                                ToVsn :: string(),
                                ToDir :: string(),
-                               Unpurged :: [Module],
+                               Unpurged :: [{Module, PurgeMethod}],
                                Module :: atom(),
+                               PurgeMethod :: term(),
                                Reason :: term().
 eval_appup_script(App, ToVsn, ToDir, Script) ->
     EnvBefore = application_controller:prep_config_change(),

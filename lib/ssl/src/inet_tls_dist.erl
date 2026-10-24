@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2011-2024. All Rights Reserved.
+%% Copyright Ericsson AB 2011-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -31,7 +31,7 @@
 -export([fam_select/2, fam_address/1, fam_listen/3, fam_accept/2,
          fam_accept_connection/6, fam_setup/6]).
 
--export([verify_client/3, cert_nodes/1]).
+-export([verify_client/3, cert_nodes/1, allowed_hosts/1]).
 
 %% kTLS helpers
 -export([inet_ktls_setopt/3, inet_ktls_getopt/3,
@@ -52,7 +52,6 @@
 -include_lib("kernel/include/logger.hrl").
 
 -define(FAMILY, inet).
--define(DRIVER, inet_tcp). % Implies ?FAMILY = inet through inet_drv.c
 -define(PROTOCOL, tls).
 
 %% -------------------------------------------------------------------------
@@ -708,7 +707,7 @@ check_ip(Socket) ->
                       end,
                 {ok, Ifaddrs} ?= inet:getifaddrs(),
                 {ok, Netmask} ?= find_netmask(IP, Ifaddrs),
-                {ok, {PeerIP, _}} ?= inet:sockname(Socket),
+                {ok, {PeerIP, _}} ?= inet:peername(Socket),
                 ok ?= if is_tuple(PeerIP) -> ok;
                          true -> {error, {no_ip_address, PeerIP}}
                       end,
@@ -849,7 +848,7 @@ get_ssl_options(Type) ->
 dist_defaults(Opts) ->
     case proplists:get_value(versions, Opts, undefined) of
         undefined ->
-            [{versions, ['tlsv1.2']} | Opts];
+            [{versions, ['tlsv1.3', 'tlsv1.2']} | Opts];
         _ ->
             Opts
     end.

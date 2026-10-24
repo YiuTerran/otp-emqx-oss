@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2008-2024. All Rights Reserved.
+%% Copyright Ericsson AB 2008-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -309,7 +309,7 @@ export(Config) ->
     {ok, B} = file:read_file(TestFile),
     ok.
 
-export_cdata(Config) ->
+export_cdata(_Config) ->
     InData = <<"<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 <doc>
    <a>Test...</a>
@@ -652,7 +652,6 @@ allow_entities_test(Config) ->
     {'EXIT',{fatal, {{error,entities_not_allowed}, _, _, _}}} =
         (catch xmerl_scan:file(File, [{allow_entities, false}])),
     ok.
-
 
 %%======================================================================
 %% Support Functions

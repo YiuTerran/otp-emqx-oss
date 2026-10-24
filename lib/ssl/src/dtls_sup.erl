@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2019-2024. All Rights Reserved.
+%% Copyright Ericsson AB 2019-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -36,7 +36,6 @@
 %%%=========================================================================
 
 -spec start_link() -> {ok, pid()} | ignore | {error, term()}.
-			
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
@@ -44,12 +43,12 @@ start_link() ->
 %%%  Supervisor callback
 %%%=========================================================================
 
-init([]) ->    
-    SupFlags = #{strategy  => one_for_one, 
+init([]) ->
+    SupFlags = #{strategy  => one_for_one,
                  intensity =>   10,
                  period    => 3600
                 },
-    Children = [dtls_connection_child_spec(), server_instance_child_spec()],    
+    Children = [dtls_connection_child_spec(), server_instance_child_spec()],
     {ok, {SupFlags, Children}}.
 
 %%--------------------------------------------------------------------
@@ -58,8 +57,8 @@ init([]) ->
 dtls_connection_child_spec() ->
     #{id       => dtls_connection_sup,
       start    => {dtls_connection_sup, start_link, []},
-      restart  => permanent, 
-      shutdown => 4000,
+      restart  => permanent,
+      shutdown => infinity,
       modules  => [dtls_connection_sup],
       type     => supervisor
      }.
@@ -67,8 +66,8 @@ dtls_connection_child_spec() ->
 server_instance_child_spec() ->
     #{id       => dtls_server_sup,
       start    => {dtls_server_sup, start_link, []},
-      restart  => permanent, 
-      shutdown => 4000,
+      restart  => permanent,
+      shutdown => infinity,
       modules  => [dtls_server_sup],
       type     => supervisor
      }.

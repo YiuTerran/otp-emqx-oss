@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2020-2024. All Rights Reserved.
+ * Copyright Ericsson AB 2020-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -727,7 +727,8 @@ void BeamModuleAssembler::emit_put_list_deallocate(const ArgSource &Hd,
 
     ASSERT(dealloc <= 1023);
 
-    if (Hd.isYRegister() && !Tl.isYRegister() && dealloc > 0) {
+    if (Hd.isYRegister() && !Tl.isYRegister() && dealloc > 0 &&
+        Support::isInt9(dealloc)) {
         auto hd_index = Hd.as<ArgYRegister>().get();
 
         if (hd_index == 0) {
@@ -738,7 +739,8 @@ void BeamModuleAssembler::emit_put_list_deallocate(const ArgSource &Hd,
             tl_reg = load_source(Tl, TMP2).reg;
             dealloc = 0;
         }
-    } else if (!Hd.isYRegister() && Tl.isYRegister() && dealloc > 0) {
+    } else if (!Hd.isYRegister() && Tl.isYRegister() && dealloc > 0 &&
+               Support::isInt9(dealloc)) {
         auto tl_index = Tl.as<ArgYRegister>().get();
 
         if (tl_index == 0) {
@@ -2197,7 +2199,7 @@ void BeamModuleAssembler::emit_is_lt(const ArgLabel &Fail,
         Label next = a.newLabel();
         comment("simplified test because it always succeeds when LHS is a "
                 "bignum");
-        emit_is_not_boxed(next, rhs.reg);
+        emit_is_not_boxed(next, lhs.reg);
         a.cmp(lhs.reg, rhs.reg);
         a.b_ge(resolve_beam_label(Fail, disp1MB));
         a.bind(next);

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1999-2024. All Rights Reserved.
+%% Copyright Ericsson AB 1999-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -86,12 +86,12 @@ process_incoming_msg(Packet, Data, SecParams, SecLevel, LocalEngineID) ->
 		Res
 	end,
     case UsmSecParams of
-	#usmSecurityParameters{msgAuthoritativeEngineID = MsgAuthEngineID,
-			       msgUserName              = TermTriggerUsername} when TermDiscoEnabled =:= true ->
+        #usmSecurityParameters{msgAuthoritativeEngineID = [],
+                               msgUserName              = TermTriggerUsername} when TermDiscoEnabled ->
 	    %% Step 1 discovery message
 	    ?vtrace("process_incoming_msg -> [~p] discovery step 1", 
 		    [TermTriggerUsername]),
-	    process_discovery_msg(MsgAuthEngineID, Data, SecLevel);
+	    process_discovery_msg([], Data, SecLevel);
 	
 	#usmSecurityParameters{msgAuthoritativeEngineID = MsgAuthEngineID,
 			       msgUserName = MsgUserName} ->

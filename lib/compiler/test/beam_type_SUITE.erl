@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2015-2024. All Rights Reserved.
+%% Copyright Ericsson AB 2015-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -25,7 +25,8 @@
          cons/1,tuple/1,
          record_float/1,binary_float/1,float_compare/1,float_overflow/1,
 	 arity_checks/1,elixir_binaries/1,find_best/1,
-         test_size/1,cover_lists_functions/1,list_append/1,bad_binary_unit/1,
+         test_size/1,cover_lists_functions/1,list_append/1,lists_mapfold/1,
+         bad_binary_unit/1,
          none_argument/1,success_type_oscillation/1,type_subtraction/1,
          container_subtraction/1,is_list_opt/1,connected_tuple_elements/1,
          switch_fail_inference/1,failures/1,
@@ -61,6 +62,7 @@ groups() ->
        test_size,
        cover_lists_functions,
        list_append,
+       lists_mapfold,
        bad_binary_unit,
        none_argument,
        success_type_oscillation,
@@ -1012,6 +1014,27 @@ list_append(_Config) ->
     hello = id([]) ++ id(hello),
     ok.
 
+%% GH-10354: Type inference broke when the fun passed to mapfoldl/mapfoldr
+%% returned a union of 2-tuples.
+lists_mapfold(_Config) ->
+    expected_result = id(lists_mapfold_1()),
+    ok.
+
+lists_mapfold_1() ->
+    List = [{key,[{number,1}]}],
+    {_, FinalAcc} =
+        lists:mapfoldl(
+            fun({_, PropListItem}, Acc) ->
+                Number = proplists:get_value(number, PropListItem),
+                case Number > 0 of
+                    true ->
+                        {false, Acc ++ [expected_result]};
+                    _ ->
+                        {true, Acc}
+                end
+            end, [], List),
+    hd(FinalAcc).
+
 %% OTP-15872: The compiler would treat the "Unit" of bs_init instructions as
 %% the unit of the result instead of the required unit of the input, causing
 %% is_binary checks to be wrongly optimized away.
@@ -1088,6 +1111,10 @@ type_subtraction(Config) when is_list(Config) ->
     ok = catch type_subtraction_4(id(ok)),
     {'EXIT', _} = catch type_subtraction_4(id(false)),
 
+    outside = id(type_subtraction_5(<<"c">>)),
+    {inside, 1} = id(type_subtraction_5(<<"a">>)),
+    {inside, 2} = id(type_subtraction_5(<<"b">>)),
+
     ok.
 
 
@@ -1150,6 +1177,16 @@ type_subtraction_4(_V0) ->
             >>
     end.
 
+%% GH-10562: Types were erroneously applied in #b_switch{} over bitstrings.
+type_subtraction_5(X) ->
+    _ = id(X),
+    case X =:= <<"a">> orelse X =:= <<"b">> of
+        false -> outside;
+        true ->
+            Y = case X of <<"a">> -> 1; _ -> 2 end,
+            {inside, Y}
+    end.
+    
 %% GH-4774: The validator didn't update container contents on type subtraction.
 container_subtraction(Config) when is_list(Config) ->
     A = id(baz),
@@ -1391,6 +1428,12 @@ cover_maps_functions(_Config) ->
 
     {'EXIT',_} = catch maps:without(not_a_list, #{}),
     {'EXIT',_} = catch maps:without([], not_a_map),
+
+    Fails = fun(_) -> error(blurf) end,
+    EmptyMap = #{},
+
+    {'EXIT',_} = catch maps:from_list(lists:map(Fails, [id(a), id(b)])),
+    EmptyMap = maps:from_list(lists:map(Fails, [])),
 
     ok.
 

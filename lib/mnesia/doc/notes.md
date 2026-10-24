@@ -25,6 +25,78 @@ as all enhancements and bugfixes for every release of Mnesia. Each release of
 Mnesia thus constitutes one section in this document. The title of each section
 is the version number of Mnesia.
 
+## Mnesia 4.23.5.6
+
+### Fixed Bugs and Malfunctions
+
+- Fixed the type specification for `mnesia:restore/2`, which incorrectly listed the operation `restore_tables` instead of `recreate_tables`, causing Dialyzer to reject valid calls and accept invalid ones.
+
+  Own Id: OTP-20442 Aux Id: [PR-11755]
+
+[PR-11755]: https://github.com/erlang/otp/pull/11755
+
+## Mnesia 4.23.5.5
+
+### Fixed Bugs and Malfunctions
+
+- Fixed `mnesia:force_load_table/1` getting stuck when the remote node becomes unreachable during table loading. When a network loader is aborted due to sender node going down and a user has forced a table load, we now retry loading from disc instead. Additionally, for disc_only_copies tables, the process actually loading the table is the dets server process, not the mnesia loader, so it would not receive the abort notification and would hang indefinitely. Now it correctly receives the notification and aborts table loading.
+
+  Own Id: OTP-20256 Aux Id: [GH-11344], [PR-11426]
+
+[GH-11344]: https://github.com/erlang/otp/issues/11344
+[PR-11426]: https://github.com/erlang/otp/pull/11426
+
+## Mnesia 4.23.5.4
+
+### Fixed Bugs and Malfunctions
+
+- A transaction iterating a table (first/1, last/1, next/2, prev/2,
+  select, select_reverse on non-ordered_set) leaked a safe_fixtable
+  hold when the coordinator was killed by an external signal. The
+  table remained fixed for the lifetime of the node, preventing
+  space reclamation of deleted objects.
+
+  Own Id: OTP-20347 Aux Id: [PR-11517]
+
+- Fixed a race condition where mnesia_controller could crash if a table was deleted while `mnesia:set_master_nodes/2` was being processed.
+
+  Own Id: OTP-20351 Aux Id: [PR-11554]
+
+[PR-11517]: https://github.com/erlang/otp/pull/11517
+[PR-11554]: https://github.com/erlang/otp/pull/11554
+
+## Mnesia 4.23.5.3
+
+### Fixed Bugs and Malfunctions
+
+- Fixed docs of `mnesia:write/3` to clarify when a transaction can terminate.
+
+  Own Id: OTP-20149 Aux Id: [GH-11104], [PR-11145]
+
+[GH-11104]: https://github.com/erlang/otp/issues/11104
+[PR-11145]: https://github.com/erlang/otp/pull/11145
+
+## Mnesia 4.23.5.2
+
+### Fixed Bugs and Malfunctions
+
+- Fixed a bug where stacktrace was not returned from `mnesia:transaction/1` when transaction aborts with an error exception.
+
+  Own Id: OTP-20094 Aux Id: [GH-10967], [PR-11002]
+
+[GH-10967]: https://github.com/erlang/otp/issues/10967
+[PR-11002]: https://github.com/erlang/otp/pull/11002
+
+## Mnesia 4.23.5.1
+
+### Fixed Bugs and Malfunctions
+
+- Fixed bug where `mnesia:del_table_copy/3` could fail when deleting a node that had tables which was not active anywhere.
+
+  Own Id: OTP-19890 Aux Id: ERIERL-1268, [PR-10482]
+
+[PR-10482]: https://github.com/erlang/otp/pull/10482
+
 ## Mnesia 4.23.5
 
 ### Fixed Bugs and Malfunctions

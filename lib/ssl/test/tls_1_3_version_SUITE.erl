@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2019-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2019-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -29,6 +29,8 @@
          groups/0,
          init_per_suite/1,
          init_per_group/2,
+         init_per_testcase/2,
+         end_per_testcase/2,
          end_per_suite/1,
          end_per_group/2
         ]).
@@ -81,9 +83,11 @@
          client_cert_fail_alert_passive/0,
          client_cert_fail_alert_passive/1,
          keylog_on_alert/0,
-         keylog_on_alert/1
-        ]).
-
+         keylog_on_alert/1,
+         client_keylog_on_alert/0,
+         client_keylog_on_alert/1,
+         keylog_hs_secret_order/0,
+         keylog_hs_secret_order/1]).
 
 %% Test callback
 -export([check_session_id/2]).
@@ -91,7 +95,7 @@
 %%--------------------------------------------------------------------
 %% Common Test interface functions -----------------------------------
 %%--------------------------------------------------------------------
-all() -> 
+all() ->
     [
      cert_groups()
     ].
@@ -120,7 +124,8 @@ tls_1_3_1_2_tests() ->
      renegotiate_error,
      client_cert_fail_alert_active,
      client_cert_fail_alert_passive,
-     keylog_on_alert
+     keylog_on_alert,
+     client_keylog_on_alert
     ].
 legacy_tests() ->
     [tls_client_tls10_server,
@@ -139,10 +144,10 @@ legacy_tests() ->
 init_per_suite(Config) ->
     case application:ensure_started(crypto) of
 	ok ->
-            case ssl_test_lib:sufficient_crypto_support('tlsv1.3') of                
+            case ssl_test_lib:sufficient_crypto_support('tlsv1.3') of
                 true ->
                     ssl_test_lib:clean_start(),
-                    [{client_type, erlang}, {server_type, erlang} | 
+                    [{client_type, erlang}, {server_type, erlang} |
                      Config];
                 false ->
                     {skip, "Insufficient crypto support for TLS-1.3"}
@@ -160,18 +165,18 @@ init_per_group(rsa, Config0) ->
     COpts = proplists:get_value(client_rsa_opts, Config),
     SOpts = proplists:get_value(server_rsa_opts, Config),
     [{client_type, erlang},
-     {server_type, erlang},{client_cert_opts, COpts}, {server_cert_opts, SOpts} | 
+     {server_type, erlang},{client_cert_opts, COpts}, {server_cert_opts, SOpts} |
      lists:delete(server_cert_opts, lists:delete(client_cert_opts, Config))];
 init_per_group(ecdsa, Config0) ->
     PKAlg = crypto:supports(public_keys),
-    case lists:member(ecdsa, PKAlg) andalso 
+    case lists:member(ecdsa, PKAlg) andalso
         (lists:member(ecdh, PKAlg) orelse lists:member(dh, PKAlg)) of
         true ->
             Config = ssl_test_lib:make_ecdsa_cert(Config0),
             COpts = proplists:get_value(client_ecdsa_opts, Config),
             SOpts = proplists:get_value(server_ecdsa_opts, Config),
             [{client_type, erlang},
-             {server_type, erlang},{client_cert_opts, COpts}, {server_cert_opts, SOpts} | 
+             {server_type, erlang},{client_cert_opts, COpts}, {server_cert_opts, SOpts} |
              lists:delete(server_cert_opts, lists:delete(client_cert_opts, Config))];
         false ->
             {skip, "Missing EC crypto support"}
@@ -179,6 +184,15 @@ init_per_group(ecdsa, Config0) ->
 
 end_per_group(GroupName, Config) ->
     ssl_test_lib:end_per_group(GroupName, Config).
+
+init_per_testcase(_TestCase, Config) ->
+    ssl_test_lib:ct_log_supported_protocol_versions(Config),
+    ct:timetrap({seconds, 20}),
+    Config.
+
+end_per_testcase(_TestCase, Config) ->
+    Config.
+
 %%--------------------------------------------------------------------
 %% Test Cases --------------------------------------------------------
 %%--------------------------------------------------------------------
@@ -195,9 +209,8 @@ tls13_client_tls12_server(Config) when is_list(Config) ->
     ssl_test_lib:basic_test(ClientOpts, ServerOpts, Config).
 
 
-    
 tls13_client_with_ext_tls12_server() ->
-     [{doc,"Test basic connection between TLS 1.2 server and TLS 1.3 client when " 
+     [{doc,"Test basic connection between TLS 1.2 server and TLS 1.3 client when "
        "client has TLS 1.3 specific extensions"}].
 
 tls13_client_with_ext_tls12_server(Config) ->
@@ -217,11 +230,11 @@ tls13_client_with_ext_tls12_server(Config) ->
                                          rsa_pkcs1_sha256,
                                          ecdsa_sha1]}|ClientOpts0],
     ssl_test_lib:basic_test(ClientOpts, ServerOpts, Config).
-   
+
 tls12_client_tls13_server() ->
     [{doc,"Test that a TLS 1.2 client can connect to a TLS 1.3 server."}].
 
-tls12_client_tls13_server(Config) when is_list(Config) ->    
+tls12_client_tls13_server(Config) when is_list(Config) ->
     ClientOpts = [{versions, ['tlsv1.1', 'tlsv1.2']} |
                   ssl_test_lib:ssl_options(client_cert_opts, Config)],
     ServerOpts =  [{versions, ['tlsv1.3', 'tlsv1.2']},
@@ -236,7 +249,7 @@ tls_client_tls10_server(Config) when is_list(Config) ->
                                         [{key_exchange, fun(srp_rsa)  -> false;
                                                            (srp_anon) -> false;
                                                            (srp_dss) -> false;
-                                                           (_) -> true end}]),        
+                                                           (_) -> true end}]),
     ClientOpts = [{versions, ['tlsv1', 'tlsv1.1', 'tlsv1.2', 'tlsv1.3']},
                   {ciphers, CCiphers} |
                   ssl_test_lib:ssl_options(client_cert_opts, Config)],
@@ -253,14 +266,14 @@ tls_client_tls11_server(Config) when is_list(Config) ->
                                         [{key_exchange, fun(srp_rsa)  -> false;
                                                            (srp_anon) -> false;
                                                            (srp_dss) -> false;
-                                                           (_) -> true end}]),    
+                                                           (_) -> true end}]),
     ClientOpts = [{versions,
                    ['tlsv1', 'tlsv1.1', 'tlsv1.2', 'tlsv1.3']},
                   {ciphers, CCiphers} |
                   ssl_test_lib:ssl_options(client_cert_opts, Config)],
     ServerOpts =  [{versions,['tlsv1.1']},
                    {verify, verify_peer}, {fail_if_no_peer_cert, true},
-                   {ciphers, ssl:cipher_suites(all, 'tlsv1.1')}  
+                   {ciphers, ssl:cipher_suites(all, 'tlsv1.1')}
                   | ssl_test_lib:ssl_options(server_cert_opts, Config)],
     ssl_test_lib:basic_test(ClientOpts, ServerOpts, Config).
 
@@ -282,7 +295,7 @@ tls10_client_tls_server(Config) when is_list(Config) ->
                                         [{key_exchange, fun(srp_rsa)  -> false;
                                                            (srp_anon) -> false;
                                                            (srp_dss) -> false;
-                                                           (_) -> true end}]),    
+                                                           (_) -> true end}]),
     ClientOpts = [{versions, ['tlsv1']},
                   {ciphers, ssl:cipher_suites(all, 'tlsv1')} |
                   ssl_test_lib:ssl_options(client_cert_opts, Config)],
@@ -300,7 +313,6 @@ tls11_client_tls_server(Config) when is_list(Config) ->
                                                            (srp_anon) -> false;
                                                            (srp_dss) -> false;
                                                            (_) -> true end}]),
-    
     ClientOpts = [{versions, ['tlsv1.1']},
                   {ciphers, ssl:cipher_suites(all, 'tlsv1.1')} |
                   ssl_test_lib:ssl_options(client_cert_opts, Config)],
@@ -341,7 +353,7 @@ legacy_tls12_server_tls_client(Config) when is_list(Config) ->
     SHA = sha384,
     Prop = proplists:get_value(tc_group_properties, Config),
     Alg = proplists:get_value(name, Prop),
-    #{client_config := ClientOpts0, 
+    #{client_config := ClientOpts0,
       server_config := ServerOpts0} = ssl_test_lib:make_cert_chains_der(Alg, [{server_chain,
                                                                                [[{digest, SHA}],
                                                                                 [{digest, SHA}],
@@ -440,13 +452,10 @@ reject_legacy_cert(Version, Alert, Config) ->
       server_config := ServerOpts0} =
         public_key:pkix_test_data(#{client_chain =>
                                         #{root => root_key(sha256),
-                                          intermedites => intermediates(sha256, 1),
+                                          intermediates => intermediates(sha256, 1),
                                           peer => peer_key(sha256)}, 
                                     server_chain => 
                                         #{root => root_key(sha256, ssl_test_lib:pss_params(sha256)),
-                                          intermedites => intermediates(sha256, 
-                                                                        ssl_test_lib:pss_params(sha256), 
-                                                                        1),
                                           peer => peer_key(sha256, ssl_test_lib:pss_params(sha256))
                                          }}),   
     ClientOpts = ClientOpts0 ++ COpts,
@@ -608,58 +617,216 @@ keylog_on_alert(Config) when is_list(Config) ->
     Fun = fun(AlertInfo) ->
                   Me ! {alert_info, AlertInfo}
           end,
-    alert_passive([{keep_secrets, {keylog_hs, Fun}} | ServerOpts], ClientOpts, recv,
-                  ServerNode, Hostname, unknown_ca),
+    keylog_alert_passive([{keep_secrets, {keylog_hs, Fun}} | ServerOpts], ClientOpts, recv,
+                         ServerNode, Hostname),
 
-    receive_server_keylog_for_client_cert_alert(),
+    receive_server_keylog_for_server_cert_alert(),
 
-    alert_passive(ServerOpts, [{keep_secrets, {keylog_hs, Fun}} | ClientOpts], recv,
-                  ServerNode, Hostname, unknown_ca),
+    keylog_alert_passive(ServerOpts,
+                         [{keep_secrets, {keylog_hs, Fun}} | ClientOpts], recv,
+                         ServerNode, Hostname),
 
-    receive_client_keylog_for_client_cert_alert(),
+    receive_client_keylog_for_server_cert_alert(),
 
     ClientNoCert = proplists:delete(keyfile, proplists:delete(certfile, ClientOpts0)),
-    alert_passive([{keep_secrets, {keylog_hs, Fun}} | ServerOpts], [{active, false} | ClientNoCert], recv,
-                  ServerNode, Hostname, certificate_required),
+    keylog_alert_passive([{keep_secrets, {keylog_hs, Fun}} | ServerOpts],
+                         [{active, false} | ClientNoCert],
+                         recv, ServerNode, Hostname),
+    receive_server_keylog_for_server_cert_alert().
 
-    receive_server_keylog_for_client_cert_alert().
 
-receive_server_keylog_for_client_cert_alert() ->
+receive_server_keylog_for_server_cert_alert() ->
     %% This alert will be decrypted with application secrets
     %% as client is already in connection
     receive
-        {alert_info, #{items := SKeyLog1}} ->
-            case SKeyLog1 of
-                ["SERVER_TRAFFIC_SECRET_0"++_] ->
-                    ok;
-                S1Other ->
-                    ct:fail({server_received, S1Other})
-            end
-    end,
-
-    receive
         {alert_info, #{items := SKeyLog}} ->
-            case SKeyLog of
-                ["CLIENT_HANDSHAKE_TRAFFIC_SECRET"++_,_|_] ->
+            case ssl_test_lib:keylog_prefixes(["CLIENT_HANDSHAKE_TRAFFIC_SECRET",
+                                  "SERVER_HANDSHAKE_TRAFFIC_SECRET",
+                                  "SERVER_TRAFFIC_SECRET_0"], SKeyLog) of
+                true ->
                     ok;
-                SOther ->
-                    ct:fail({server_received, SOther})
+                false ->
+                    ct:fail({server_received, SKeyLog})
+            end
+    end.
+
+receive_client_keylog_for_server_cert_alert() ->
+    receive
+        {alert_info, #{items := CKeyLog}} ->
+            case ssl_test_lib:keylog_prefixes(["CLIENT_HANDSHAKE_TRAFFIC_SECRET",
+                                  "SERVER_HANDSHAKE_TRAFFIC_SECRET",
+                                  "CLIENT_TRAFFIC_SECRET_0",
+                                  "SERVER_TRAFFIC_SECRET_0"], CKeyLog) of
+                true ->
+                    CTS = extract_secret("CLIENT_TRAFFIC_SECRET_0",  CKeyLog),
+                    STS = extract_secret("SERVER_TRAFFIC_SECRET_0",  CKeyLog),
+                    %% Before the fix, both were identical
+                    %% After the fix, they must be distinct.
+                    case CTS =/= STS of
+                        true ->
+                            ok;
+                        false ->
+                            ct:fail({traffic_secrets_identical,
+                                             [{client_traffic_secret_0, CTS},
+                                              {server_traffic_secret_0, STS}]})
+                    end;
+                false ->
+                    ct:fail({client_received, CKeyLog})
             end
     end.
 
 receive_client_keylog_for_client_cert_alert() ->
     receive
         {alert_info, #{items := CKeyLog}} ->
-            case CKeyLog of
-                ["CLIENT_HANDSHAKE_TRAFFIC_SECRET"++_,_,_,_|_] ->
+            case ssl_test_lib:keylog_prefixes(["CLIENT_HANDSHAKE_TRAFFIC_SECRET",
+                                  "SERVER_HANDSHAKE_TRAFFIC_SECRET"], CKeyLog) of
+                true ->
                     ok;
-                COther ->
-                    ct:fail({client_received, COther})
+                false ->
+                    ct:fail({client_received, CKeyLog})
             end
     end.
+
+client_keylog_on_alert() ->
+    [{doc,"Test that keep_secrets keylog_hs callback, if specified, "
+      "is called with keylog info when handshake alert is raised on client"}].
+
+client_keylog_on_alert(Config) when is_list(Config) ->
+    ssl:clear_pem_cache(),
+    SHA = sha256,
+    {_, ServerNode, Hostname} = ssl_test_lib:run_where(Config),
+    #{client_config := ClientOpts0} =
+        public_key:pkix_test_data(#{server_chain => #{root => root_key(SHA),
+                                                      intermediates => intermediates(SHA, 1),
+                                                      peer => peer_key(SHA)},
+                                    client_chain => #{root => root_key(SHA),
+                                                      intermediates => intermediates(SHA, 1),
+                                                      peer => peer_key(SHA)}}),
+    #{server_config := ServerOpts} =
+       public_key:pkix_test_data(#{client_chain =>
+                                        #{root => root_key(sha256),
+                                          intermediates => intermediates(sha256, 1),
+                                          peer => peer_key(sha256)},
+                                    server_chain =>
+                                        #{root => [{digest, sha256},{key, ssl_test_lib:hardcode_rsa_key(5)}],
+                                          intermediates => intermediates(sha256, 1),
+                                          peer => peer_key(sha256)
+                                         }}),
+
+    [_CertOpt, _KeyOpt, CaCerts] = ClientOpts0,
+    Me = self(),
+    Fun = fun(AlertInfo) ->
+                  Me ! {alert_info, AlertInfo}
+          end,
+    ClientOpts = [{verify, verify_peer},{keep_secrets, {keylog_hs, Fun}}, CaCerts],
+    Server = ssl_test_lib:start_server([{node, ServerNode}, {port, 0},
+                                        {from, self()},
+                                        {mfa, {ssl_test_lib, no_result, []}},
+                                        {options, ServerOpts}]),
+    Port = ssl_test_lib:inet_port(Server),
+
+    ClientFun = fun() ->
+                  {error,{tls_alert,{unknown_ca, _}}} = ssl:connect(Hostname, Port, ClientOpts)
+                end,
+
+    %% Execute in other process and let test case detect key-log message.
+    spawn_link(ClientFun),
+    receive_client_keylog_for_client_cert_alert().
+
+keylog_hs_secret_order() ->
+    [{doc, "Verify that keylog_hs callback on the server reports "
+      "CLIENT/SERVER_HANDSHAKE_TRAFFIC_SECRET under the correct "
+      "labels by cross-checking with the client's keylog output"}].
+
+keylog_hs_secret_order(Config) when is_list(Config) ->
+    ssl:clear_pem_cache(),
+    {_, ServerNode, Hostname} = ssl_test_lib:run_where(Config),
+    ClientOpts0 = ssl_test_lib:ssl_options(extra_client, client_cert_opts, Config),
+    ServerOpts0 = ssl_test_lib:ssl_options(extra_server, server_cert_opts, Config),
+    PrivDir = proplists:get_value(priv_dir, Config),
+
+    %% Create a bad client cert — the server will reject it after
+    %% handshake traffic secrets have been derived on both sides.
+    NewClientCertFile = filename:join(PrivDir, "client_invalid_cert_order.pem"),
+    create_bad_client_certfile(NewClientCertFile, ClientOpts0),
+
+    register(test_case, self()),
+
+    ServerHsFun = fun(Info) -> test_case ! {server_hs_keylog, Info} end,
+    ClientHsFun = fun(Info) -> test_case ! {client_hs_keylog, Info} end,
+
+    ServerOpts = [{versions, ['tlsv1.3']},
+                  {verify, verify_peer},
+                  {fail_if_no_peer_cert, true},
+                  {keep_secrets, {keylog_hs, ServerHsFun}}
+                  | ServerOpts0],
+    ClientOpts = [{versions, ['tlsv1.3']},
+                  {active, false},
+                  {certfile, NewClientCertFile},
+                  {keep_secrets, {keylog, ClientHsFun}}
+                  | proplists:delete(certfile, ClientOpts0)],
+
+    Server = ssl_test_lib:start_server([{node, ServerNode}, {port, 0},
+                                        {from, self()},
+                                        {mfa, {ssl_test_lib, no_result, []}},
+                                        {options, ServerOpts}]),
+    Port = ssl_test_lib:inet_port(Server),
+
+    spawn(fun() ->
+                  ssl:connect(Hostname, Port, ClientOpts)
+          end),
+
+
+    %% Both sides fire keylog_hs on the alert. Collect both.
+    ServerKeyLog = receive
+                       {server_hs_keylog, #{items := S}} -> S
+                   after 5000 ->
+                           ct:fail(server_keylog_timeout)
+                   end,
+
+    ssl_test_lib:check_server_alert(Server, unknown_ca),
+    ClientKeyLog = receive
+                       {client_hs_keylog, #{items := C}} -> C
+                   after 5000 ->
+                           ct:fail(server_keylog_timeout)
+                   end,
+
+    %% Extract the secret value from each label on each side.
+    %% The client-side path is known correct; the server-side
+    %% had a swap bug — this cross-check detects it.
+    ServerCHS = extract_secret("CLIENT_HANDSHAKE_TRAFFIC_SECRET", ServerKeyLog),
+    ServerSHS = extract_secret("SERVER_HANDSHAKE_TRAFFIC_SECRET", ServerKeyLog),
+    ClientCHS = extract_secret("CLIENT_HANDSHAKE_TRAFFIC_SECRET", ClientKeyLog),
+    ClientSHS = extract_secret("SERVER_HANDSHAKE_TRAFFIC_SECRET", ClientKeyLog),
+
+    %% The two secrets must be different (sanity) and both sides
+    %% must agree on which secret belongs to which label.
+    true = (ClientCHS =/= ClientSHS),
+    case {ServerCHS =:= ClientCHS, ServerSHS =:= ClientSHS} of
+        {true, true} ->
+            ok;
+        _ ->
+            ct:fail({handshake_secrets_swapped,
+                     [{server_client_hs_secret, ServerCHS},
+                      {client_client_hs_secret, ClientCHS},
+                      {server_server_hs_secret, ServerSHS},
+                      {client_server_hs_secret, ClientSHS}]})
+    end.
+
 %%--------------------------------------------------------------------
 %% Internal functions and callbacks -----------------------------------
 %%--------------------------------------------------------------------
+
+extract_secret(Prefix, KeyLog) ->
+    Flat = [lists:flatten(L) || L <- KeyLog],
+    case [L || L <- Flat, lists:prefix(Prefix, L)] of
+        [Line] ->
+            %% Format: "LABEL <hex_random> <hex_secret>"
+            Tokens = string:tokens(Line, " "),
+            lists:last(Tokens);
+        [] ->
+            ct:fail({keylog_prefix_not_found, Prefix, Flat})
+    end.
 
 middlebox_test(Mode, Expected, ClientOpts, ServerOpts, Config) ->
     {ClientNode, ServerNode, Hostname} = ssl_test_lib:run_where(Config),
@@ -702,6 +869,26 @@ alert_passive(ServerOpts, ClientOpts, Function,
         setopts ->
             {error, {tls_alert, {unknown_ca,_}}} = ssl:setopts(Socket, [{active, once}])
     end.
+
+keylog_alert_passive(ServerOpts, ClientOpts, Function,
+                     ServerNode, Hostname) ->
+    Server = ssl_test_lib:start_server([{node, ServerNode}, {port, 0},
+                                        {from, self()},
+                                        {mfa, {ssl_test_lib, no_result, []}},
+                                        {options, ServerOpts}]),
+    Port = ssl_test_lib:inet_port(Server),
+
+    Fun = fun() ->
+                  {ok, Socket} = ssl:connect(Hostname, Port, ClientOpts),
+                  case Function of
+                      recv ->
+                          ssl:recv(Socket, 0);
+                      setopts ->
+                          ssl:setopts(Socket, [{active, once}])
+                  end
+          end,
+    %% Execute in other process and let test case detect key-log message.
+    spawn_link(Fun).
 
 create_bad_client_certfile(NewClientCertFile, ClientOpts) ->
     KeyFile =  proplists:get_value(keyfile, ClientOpts),

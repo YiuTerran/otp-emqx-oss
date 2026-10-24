@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2007-2024. All Rights Reserved.
+%% Copyright Ericsson AB 2007-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -56,6 +56,7 @@
 -define(DEFAULT_TIMEOUT, 5000).
 -define(NO_DIST_POINT, "http://dummy/no_distribution_point").
 -define(NO_DIST_POINT_PATH, "dummy/no_distribution_point").
+-define(MAX_CRL_SIZE, 10485760). %% 10 * 1024 * 1024 ~ 10 MB
 
 %% Common enumerate values in for SSL-protocols 
 -define(NULL, 0).
@@ -124,7 +125,7 @@
 -define('FROM_TLS-1_2_ONLY_OPTIONS', [signature_algs,
                                       signature_algs_cert]).
 -define('PRE_TLS-1_3_ONLY_OPTIONS', [client_renegotiation,
-                                     dh_file,
+                                     dhfile,
                                      eccs,
                                      fallback,
                                      secure_renegotiate,

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2008-2023. All Rights Reserved.
+%% Copyright Ericsson AB 2008-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -32,9 +32,15 @@
 
 -define(MAX_NUM_ALGORITHMS, 200).
 
--define(DEFAULT_DH_GROUP_MIN,   1024).
+-define(DEFAULT_DH_GROUP_MIN,   2047).
 -define(DEFAULT_DH_GROUP_NBITS, 2048).
 -define(DEFAULT_DH_GROUP_MAX,   8192).
+
+%% Absolute minimum DH group size the client will accept from a server
+%% during GEX, regardless of dh_gex_limits configuration.
+%% Matches the smallest built-in group in pubkey_moduli.hrl.
+%% OpenSSH uses 2048 (DH_GRP_MIN); our moduli are labeled 2047.
+-define(DH_GEX_MIN_BITS, 2047).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%

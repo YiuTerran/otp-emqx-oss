@@ -21,6 +21,61 @@ limitations under the License.
 
 This document describes the changes made to the STDLIB application.
 
+## STDLIB 6.2.2.5
+
+### Fixed Bugs and Malfunctions
+
+- Fixed a bug in `unicode_util:gc/1` where the grapheme cluster   segmentation of `$\r` (not followed by `$\n`) would decompose binary continuations into mixed chardata. This caused `string:trim/3` (and `string:chomp/1`) to return incorrect results or crash when trimming strings containing binaries followed by another list element.
+
+  Own Id: OTP-20296 Aux Id: [GH-11380], [PR-11464]
+
+- When compiling a module with a triple-quoted string with escape sequences and a chunk boundary happened to fall just after an escape character, that character was not passed to the reentrancy continuation, so the scanner interpreted the following characters as not an escape sequence.
+  
+  This bug has now been fixed.
+
+  Own Id: OTP-20320 Aux Id: [GH-11423], [PR-11505]
+
+- `uri_string:parse/1` now rejects URIs with an unreasonably long port component (more than 5 digits) instead of attempting to convert an arbitrarily large digit string to an integer.
+
+  Own Id: OTP-20344 Aux Id: [PR-11538]
+
+[GH-11380]: https://github.com/erlang/otp/issues/11380
+[PR-11464]: https://github.com/erlang/otp/pull/11464
+[GH-11423]: https://github.com/erlang/otp/issues/11423
+[PR-11505]: https://github.com/erlang/otp/pull/11505
+[PR-11538]: https://github.com/erlang/otp/pull/11538
+
+## STDLIB 6.2.2.4
+
+### Fixed Bugs and Malfunctions
+
+- Fixed a bug where zip:unzip/1,2 and zip:extract/1,2 were vulnerable to a relative path traversal attack. A crafted zip archive containing entry names such as ../x/y could have caused files to be written outside the intended extraction directory.
+  
+  Thanks to Jonatan Männchen and Zhang Delong for finding and responsibly disclosing this vulnerability to the Erlang/OTP project.
+
+  Own Id: OTP-20143 Aux Id: [CVE-2026-47078], [PR-11386]
+
+[CVE-2026-47078]: https://nvd.nist.gov/vuln/detail/2026-47078
+[PR-11386]: https://github.com/erlang/otp/pull/11386
+
+## STDLIB 6.2.2.3
+
+### Fixed Bugs and Malfunctions
+
+- Fixed bug in `ets:update_counter/4` and `ets:update_element/4` accepting and inserting a default tuple smaller than the `keypos` of the table. Such a tuple without a key element would make the table internally inconsistent and might lead to bad behavior at table access, like ERTS runtime crash.
+  
+  Now a call to `ets:update_counter/4` or `ets:update_element/4` will fail with `badarg` if the key does not exist in the table and the default tuple is too small.
+
+  Own Id: OTP-19962 Aux Id: [PR-10616]
+
+- For a function that started with a bracket-only pattern (such as `[]`), the `?FUNCTION_ARITY` macro would evaluate to one less than the actual arity.
+
+  Own Id: OTP-19988 Aux Id: [GH-10705], [PR-10708]
+
+[PR-10616]: https://github.com/erlang/otp/pull/10616
+[GH-10705]: https://github.com/erlang/otp/issues/10705
+[PR-10708]: https://github.com/erlang/otp/pull/10708
+
 ## STDLIB 6.2.2.2
 
 ### Fixed Bugs and Malfunctions

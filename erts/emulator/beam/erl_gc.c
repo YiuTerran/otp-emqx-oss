@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2002-2025. All Rights Reserved.
+ * Copyright Ericsson AB 2002-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -982,6 +982,8 @@ garbage_collect_hibernate(Process* p, int check_long_gc)
     if (p->flags & F_DISABLE_GC)
 	ERTS_INTERNAL_ERROR("GC disabled");
 
+    p->flags |= F_HIBERNATED;
+
     if (p->sig_qs.flags & FS_ON_HEAP_MSGQ) {
         erts_proc_lock(p, ERTS_PROC_LOCK_MSGQ);
         erts_proc_sig_fetch(p);
@@ -1124,8 +1126,6 @@ garbage_collect_hibernate(Process* p, int check_long_gc)
      */
 
     ErtsGcQuickSanityCheck(p);
-
-    p->flags |= F_HIBERNATED;
 
     erts_atomic32_read_band_nob(&p->state, ~ERTS_PSFLG_GC);
 

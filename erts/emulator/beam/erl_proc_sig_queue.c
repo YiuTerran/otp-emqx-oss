@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  * 
- * Copyright Ericsson AB 2018-2025. All Rights Reserved.
+ * Copyright Ericsson AB 2018-2026. All Rights Reserved.
  * 
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -4495,10 +4495,6 @@ convert_to_down_message(Process *c_p,
          */
 
         tag = save_heap_frag_eterm(c_p, mp, &mdep->u.name);
-        
-        /* Restore to normal monitor */
-        ASSERT(mdep->u.name == NIL);
-        mdp->origin.flags &= ~ERTS_ML_FLGS_SPAWN;
 
         ref = STORE_NC(&hp, ohp, mdp->ref);
         
@@ -5046,6 +5042,7 @@ sync_suspend_reply(Process *c_p, ErtsMessage *mp, erts_aint32_t state)
      */
     Process *rp;
     ErtsSyncSuspendRequest *ssusp;
+    int is_managed;
 
     ssusp = (ErtsSyncSuspendRequest *) (char *) (&mp->hfrag.mem[0]
                                                  + mp->hfrag.used_size);
@@ -5065,7 +5062,10 @@ sync_suspend_reply(Process *c_p, ErtsMessage *mp, erts_aint32_t state)
     mp->data.attached = ERTS_MSG_COMBINED_HFRAG;
     mp->next = NULL;
 
-    rp = erts_proc_lookup(ssusp->requester);
+    is_managed = erts_thr_progress_is_managed_thread();
+    rp = (is_managed
+          ? erts_proc_lookup(ssusp->requester)
+          : erts_proc_lookup_inc_refc(ssusp->requester));
     if (!rp)
         erts_cleanup_messages(mp);
     else {
@@ -5084,6 +5084,8 @@ sync_suspend_reply(Process *c_p, ErtsMessage *mp, erts_aint32_t state)
         }
         ERL_MESSAGE_TOKEN(mp) = am_undefined;
         erts_queue_proc_message(c_p, rp, 0, mp, ssusp->message);
+        if (!is_managed)
+            erts_proc_dec_refc(rp);
     }
 }
 
@@ -5228,6 +5230,8 @@ erts_proc_sig_handle_pending_suspend(Process *c_p)
 
         msp = next_msp;
     }
+
+    state = erts_atomic32_read_nob(&c_p->state);
 
     sync = psusp->sync;
 
@@ -5914,7 +5918,8 @@ erts_proc_sig_handle_incoming(Process *c_p, erts_aint32_t *statep,
                     erts_monitor_release(tmon);
             }
             else {
-                switch (omon->flags & ERTS_ML_STATE_ALIAS_MASK) {
+                switch (omon->flags & (ERTS_ML_STATE_ALIAS_MASK
+                                       | ERTS_ML_FLG_SPAWN_PENDING)) {
                 case ERTS_ML_STATE_ALIAS_UNALIAS: {
                     ErtsMonitorData *amdp;
                     ASSERT(is_internal_pid_ref(mdp->ref));
@@ -5963,11 +5968,6 @@ erts_proc_sig_handle_incoming(Process *c_p, erts_aint32_t *statep,
                 ASSERT(erts_monitor_is_origin(mon));
                 handle_persistent_mon_msg(c_p, &tracing, type, mon, sig,
                                           msg, next_nm_sig);
-
-                if ((mon->flags & ERTS_ML_STATE_ALIAS_MASK)
-                    == ERTS_ML_STATE_ALIAS_ONCE) {
-                    mon->flags &= ~ERTS_ML_STATE_ALIAS_MASK;
-                }
             }
             else {
                 cnt++;

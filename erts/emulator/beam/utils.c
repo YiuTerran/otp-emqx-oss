@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1996-2024. All Rights Reserved.
+ * Copyright Ericsson AB 1996-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -3498,8 +3498,15 @@ static void erts_qsort_insertion_sort(byte *base,
                                       size_t item_size,
                                       erts_void_ptr_cmp_t compare)
 {
-    byte *end = base + ((nr_of_items-1) * item_size);
     byte *unsorted_start = base;
+    byte *end;
+
+    if (nr_of_items < 2) {
+        return;
+    }
+
+    end = base + ((nr_of_items-1) * item_size);
+
     while (unsorted_start < end) {
         byte *smallest_so_far = unsorted_start;
         byte *curr = smallest_so_far + item_size;

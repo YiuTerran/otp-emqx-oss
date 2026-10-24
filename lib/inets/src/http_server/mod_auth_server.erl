@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 2001-2024. All Rights Reserved.
+%% Copyright Ericsson AB 2001-2026. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -259,7 +259,8 @@ api_call(Addr, Port, Profile, Dir, Func, Args,Password,State) ->
 	    case ets:match_object(ConfigName, {directory, {Dir, '$1'}}) of
 		[{directory, {Dir, DirData}}] ->
 		    AuthMod = auth_mod_name(DirData),
-		    (catch apply(AuthMod, Func, [DirData|Args]));
+                    DirDataWithPath = [{path, Dir} | DirData],
+		    (catch apply(AuthMod, Func, [DirDataWithPath|Args]));
 		_ ->
 		    {error, no_such_directory}
 	    end;

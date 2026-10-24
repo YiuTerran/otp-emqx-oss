@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2008-2024. All Rights Reserved.
+%% Copyright Ericsson AB 2008-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -109,6 +109,7 @@
          verify_active_session_resumption/5,
          verify_server_early_data/3,
          verify_session_ticket_extension/2,
+         verify_no_session_ticket_early_data_extension/1,
          update_session_ticket_extension/2,
          check_sane_openssl_version/2,
          check_ok/1,
@@ -162,7 +163,8 @@
          public_key/1,
          state/1,
          new_config/2,
-         node_to_hostip/2
+         node_to_hostip/2,
+         keylog_prefixes/2
        ]).
 
 -export([make_rsa_cert/1,
@@ -181,6 +183,7 @@
          make_rsa_1024_cert/1,
          make_rsa_pss_pem/4,
          make_rsa_sni_configs/0,
+         make_cross_ca_pems/1,
          pss_params/1,
          gen_conf/4,
          make_mix_cert/1,
@@ -217,7 +220,6 @@
          openssl_ecdsa_suites/0,
          openssl_dsa_suites/0,
          enough_openssl_crl_support/1,
-         openssl_ocsp_support/1,
          openssl_allows_client_renegotiate/1,
          version_flag/1,
          portable_cmd/2,
@@ -421,16 +423,6 @@ end_per_group(GroupName, Config) ->
           Config
   end.
 
-openssl_ocsp_support(Config) ->
-    case proplists:get_value(openssl_version, Config) of
-        "OpenSSL 1.1.1" ++ _Rest ->
-            true;
-        "OpenSSL 3" ++ _Rest ->
-            true;
-        _ ->
-            false
-    end.
-
 openssl_ciphers() ->
     Str = portable_cmd("openssl", ["ciphers"]),
     Ciphers = string:split(string:strip(Str, right, $\n), ":", all),
@@ -574,6 +566,15 @@ normalize_loopback({127,_,_,_}, client) ->
 normalize_loopback(Address, _) ->
     Address.
 
+keylog_prefixes([], []) ->
+    true;
+keylog_prefixes([Prefix | Prefixes], [Secret | Secrets]) ->
+    case lists:prefix(Prefix, Secret) of
+        true  ->
+            keylog_prefixes(Prefixes, Secrets);
+        false ->
+            false
+    end.
 
 start_server(Args0, Config) ->
     {_, ServerNode, _} = run_where(Config),
@@ -1699,6 +1700,65 @@ make_sni_conf(HostName, Sha) ->
                                                          {key, hardcode_rsa_key(5)}]],
                                       peer => [{digest, Sha},
                                                {key, hardcode_rsa_key(6)}]}}).
+
+%% Build PEM material for the cross-CA SNI test:
+%%  - one shared server certificate presented for both SNI names
+%%  - two independent client CAs (low / high)
+%%  - a client certificate signed by the low CA
+%% The server certificate carries both SNI names as SANs so that the
+%% same certificate legitimately serves low.test and high.test, which
+%% is what makes the pre-TLS-1.3 session cache's is_owncert check pass.
+make_cross_ca_pems(PrivDir) ->
+    Sha = sha256,
+    SNIExt = [#'Extension'{extnID = ?'id-ce-subjectAltName',
+                           extnValue = [{dNSName, "low.test"},
+                                        {dNSName, "high.test"}],
+                           critical = false}],
+    %% Call 1: shared server + low client CA.
+    Data1 = public_key:pkix_test_data(
+              #{server_chain =>
+                    #{root => [{digest, Sha}, {key, ssl_test_lib:hardcode_rsa_key(1)}],
+                      intermediates => [[{digest, Sha},
+                                         {key, ssl_test_lib:hardcode_rsa_key(2)}]],
+                      peer => [{digest, Sha}, {extensions, SNIExt},
+                               {key, ssl_test_lib:hardcode_rsa_key(3)}]},
+                client_chain =>
+                    #{root => [{digest, Sha}, {key, ssl_test_lib:hardcode_rsa_key(4)}],
+                      intermediates => [[{digest, Sha},
+                                         {key, ssl_test_lib:hardcode_rsa_key(5)}]],
+                      peer => [{digest, Sha},
+                               {key, ssl_test_lib:hardcode_rsa_key(6)}]}}),
+    [{server_config, SharedServerConf},
+     {client_config, LowClientConf}] =
+        x509_test:gen_pem_config_files(
+          Data1,
+          filename:join(PrivDir, "otp20445_low"),
+          filename:join(PrivDir, "otp20445_shared")),
+
+    %% Call 2: throwaway server + an independent high client CA. Only
+    %% the client (high) CA file is used from this call.
+    Data2 = public_key:pkix_test_data(
+              #{server_chain =>
+                    #{root => [{digest, Sha}], intermediates => [[{digest, Sha}]],
+                      peer => [{digest, Sha}]},
+                client_chain =>
+                    #{root => [{digest, Sha}], intermediates => [[{digest, Sha}]],
+                      peer => [{digest, Sha}]}}),
+    [{server_config, _}, {client_config, HighClientConf}] =
+        x509_test:gen_pem_config_files(
+          Data2,
+          filename:join(PrivDir, "otp20445_high"),
+          filename:join(PrivDir, "otp20445_throwaway")),
+
+    ServerConf = [{certfile, proplists:get_value(certfile, SharedServerConf)},
+                  {keyfile, proplists:get_value(keyfile, SharedServerConf)}],
+    ServerCACertFile = proplists:get_value(cacertfile, SharedServerConf),
+    LowCACertFile = proplists:get_value(cacertfile, LowClientConf),
+    HighCACertFile = proplists:get_value(cacertfile, HighClientConf),
+    LowClientCert = proplists:get_value(certfile, LowClientConf),
+    LowClientKey = proplists:get_value(keyfile, LowClientConf),
+    {ServerConf, ServerCACertFile, LowCACertFile, HighCACertFile,
+     LowClientCert, LowClientKey}.
 
 gen_conf(ClientChainType, ServerChainType, UserClient, UserServer) ->
     gen_conf(ClientChainType, ServerChainType, UserClient, UserServer, ?DEFAULT_CURVE).
@@ -3146,17 +3206,30 @@ verify_session_ticket_extension([Ticket0|_], MaxEarlyDataSize) ->
                      [MaxEarlyDataSize, Else])
       end.
 
+verify_no_session_ticket_early_data_extension([Ticket0|_]) ->
+    #{ticket := #new_session_ticket{extensions = Extensions}} = Ticket0,
+    case maps:is_key(early_data, Extensions) of
+        true ->
+            ?CT_FAIL("~nUnexpected early_data extension in session ticket: ~p",
+                     [Extensions]);
+        false ->
+            ?CT_LOG("~nNo early_data extension in session ticket as expected.")
+    end.
+
 update_session_ticket_extension([Ticket|_], MaxEarlyDataSize) ->
     #{ticket := #new_session_ticket{
-                   extensions = #{early_data :=
-                                      #early_data_indication_nst{
-                                         indication = Size}}}} = Ticket,
+                   extensions = Extensions0} = NST0} = Ticket,
+    Size0 = case Extensions0 of
+                #{early_data := #early_data_indication_nst{indication = Size}} ->
+                    Size;
+                _ ->
+                    undefined
+            end,
     ?CT_LOG("~nOverwrite max_early_data_size (from ~p to ~p)!",
-                     [Size, MaxEarlyDataSize]),
-    #{ticket := #new_session_ticket{
-                   extensions = #{early_data := _Extensions0}} = NST0} = Ticket,
-    Extensions = #{early_data => #early_data_indication_nst{
-                                    indication = MaxEarlyDataSize}},
+            [Size0, MaxEarlyDataSize]),
+    Extensions = Extensions0#{early_data =>
+                                  #early_data_indication_nst{
+                                     indication = MaxEarlyDataSize}},
     NST = NST0#new_session_ticket{extensions = Extensions},
     [Ticket#{ticket => NST}].
 
@@ -3959,7 +4032,7 @@ reuse_session(ClientOpts, ServerOpts, Config) ->
                       {from, self()},
                       {mfa, {ssl_test_lib, no_result, []}},
                       {tcp_options, [{active, false}]},
-                      {options, ServerOpts}]),
+                      {options, [{reuse_sessions, true} | ServerOpts]}]),
     Port0 = inet_port(Server0),
 
     Client0 = start_client([{node, ClientNode},
@@ -4046,7 +4119,7 @@ user_lookup(psk, _Identity, UserState) ->
 user_lookup(srp, Username, _UserState) ->
     Salt = ssl_cipher:random_bytes(16),
     UserPassHash = crypto:hash(sha, [Salt, crypto:hash(sha, [Username, <<$:>>, <<"secret">>])]),
-    {ok, {srp_1024, Salt, UserPassHash}}.
+    {ok, {srp_2048, Salt, UserPassHash}}.
 
 test_cipher(TestCase, Config) ->
     [{name, Group} |_] = proplists:get_value(tc_group_properties, Config),

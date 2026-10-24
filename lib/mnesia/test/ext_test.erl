@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1996-2024. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -121,7 +121,7 @@ delete_table(Alias, Tab) ->
     try error_if_not_initialized() of
         ok ->
             call({?FUNCTION_NAME, Alias, Tab})
-    catch error : {backend_not_initialized, _} = Reason ->
+    catch error : {backend_not_initialized, _} ->
         ok
     end.
 
@@ -253,8 +253,8 @@ repair_continuation(Cont, Ms) ->
 call(Req) ->
     error_if_not_initialized(),
     case gen_server:call({global, mnesia_test_lib:get_ext_test_server_name()}, Req) of
-        #exception{c = Class, r = Reason, st = ST} = Ex ->
-            ?DBG("call ~p resulted in an exception: ~p~n", [Req, Ex]),
+        #exception{c = Class, r = Reason, st = ST} = _Ex ->
+            ?DBG("call ~p resulted in an exception: ~p~n", [Req, _Ex]),
             erlang:raise(Class, Reason, ST);
         Res ->
             Res

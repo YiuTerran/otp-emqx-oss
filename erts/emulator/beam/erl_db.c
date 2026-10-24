@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1996-2024. All Rights Reserved.
+ * Copyright Ericsson AB 1996-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -58,6 +58,7 @@
 #define EXI_OWNER    am_owner	 /* The receiving process is already the owner. */
 #define EXI_NOT_OWNER am_not_owner /* The current process is not the owner. */
 #define EXI_ALREADY_EXISTS am_already_exists /* The table identifier already exists. */
+#define EXI_DEFAULT  am_default /* Invalid default tuple */
 
 #define DB_WRITE_CONCURRENCY_MIN_LOCKS 1
 #define DB_WRITE_CONCURRENCY_MAX_LOCKS 32768
@@ -248,7 +249,7 @@ static void table_dec_refc(DbTable *tb, erts_aint_t min_val)
 static ERTS_INLINE DbTable* btid2tab(Binary* btid)
 {
     erts_atomic_t *tbref = erts_binary_to_magic_indirection(btid);
-    return (DbTable *) erts_atomic_read_nob(tbref);
+    return (DbTable *) erts_atomic_read_acqb(tbref);
 }
 
 static int
@@ -331,7 +332,7 @@ tid_clear(Process *c_p, DbTable *tb)
     DbTable *rtb;
     Binary *btid = tb->common.btid;
     erts_atomic_t *tbref = erts_binary_to_magic_indirection(btid);
-    rtb = (DbTable *) erts_atomic_xchg_nob(tbref, (erts_aint_t) NULL);
+    rtb = (DbTable *) erts_atomic_xchg_relb(tbref, (erts_aint_t) NULL);
     ASSERT(!rtb || tb == rtb);
     if (rtb) {
         table_dec_refc(tb, 1);
@@ -1319,7 +1320,13 @@ static BIF_RETTYPE do_update_element(Process *p, DbTable *tb,
     }
 
     if (!tb->common.meth->db_lookup_dbterm(p, tb, key, default_obj, &handle)) {
-	cret = DB_ERROR_BADKEY;
+        if (is_value(default_obj)) {
+            p->fvalue = EXI_DEFAULT;
+            cret = DB_ERROR_UNSPEC;
+        }
+        else {
+            cret = DB_ERROR_BADKEY;
+        }
 	goto bail_out;
     }
 
@@ -1454,7 +1461,7 @@ do_update_counter(Process *p, DbTable* tb,
     }
 
     if (!tb->common.meth->db_lookup_dbterm(p, tb, arg2, arg4, &handle)) {
-	p->fvalue = EXI_BAD_KEY;
+        p->fvalue = is_value(arg4) ? EXI_DEFAULT : EXI_BAD_KEY;
 	cret = DB_ERROR_BADPARAM;
 	goto bail_out; /* key not found */
     }
@@ -5056,6 +5063,8 @@ static void fix_table_locked(Process* p, DbTable* tb)
     DbFixation *fix;
     int use_locks = !DB_LOCK_FREE(tb);
 
+    ERTS_LC_ASSERT(DB_LOCK_FREE(tb) || erts_lc_rwmtx_is_rlocked(&tb->common.rwlock));
+
     if (use_locks)
         erts_mtx_lock(&tb->common.fixlock);
 
@@ -5100,6 +5109,8 @@ static void unfix_table_locked(Process* p,  DbTable* tb,
 {
     DbFixation* fix;
     int use_locks = !DB_LOCK_FREE(tb);
+
+    ERTS_LC_ASSERT(DB_LOCK_FREE(tb) || erts_lc_rwmtx_is_rlocked(&tb->common.rwlock));
 
     if (use_locks)
         erts_mtx_lock(&tb->common.fixlock);

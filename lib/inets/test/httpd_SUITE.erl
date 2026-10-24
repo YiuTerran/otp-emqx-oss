@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2013-2023. All Rights Reserved.
+%% Copyright Ericsson AB 2013-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -42,7 +42,8 @@
 %% Seconds before successful auths timeout.
 -define(AUTH_TIMEOUT,5).
 -define(URL_START, "http://").
-
+-define(URL_START_HTTPS, "https://").
+-define(SSL_NO_VERIFY, {ssl, [{verify, verify_none}]}).
 %%--------------------------------------------------------------------
 %% Common Test interface functions -----------------------------------
 %%--------------------------------------------------------------------
@@ -79,11 +80,14 @@ all() ->
      {group, http_logging},
      {group, http_post},
      {group, http_rel_path_script_alias},
+     {group, http_script_alias_auth},
      {group, http_not_sup},
      {group, https_alert},
      {group, https_not_sup},
      {group, esi},
-     mime_types_format
+     mime_types_format,
+     keepalive_timeout,
+     keepalive_timeout_disabled
     ].
 
 groups() ->
@@ -123,25 +127,37 @@ groups() ->
 		   non_disturbing_1_0,
            disturbing_1_1,
            disturbing_1_0,
-		   reload_config_file
+                   reload_config_file,
+                   reload_invalid_config_survives
 		  ]},
-     {post, [], [chunked_post, chunked_chunked_encoded_post, post_204]},
-     {basic_auth, [], [basic_auth_1_1, basic_auth_1_0, verify_href_1_1]},
+     {post, [], [chunked_post,
+                 chunked_chunked_encoded_post,
+                 post_204,
+                 chunked_invalid_chunk_size,
+                 multiple_content_length_header]},
+     {basic_auth, [], [basic_auth_1_1, basic_auth_1_0, verify_href_1_1,
+                      double_slash_auth_bypass, case_insensitive_auth_bypass,
+                      auth_path_canonicalization]},
      {auth_api, [], [auth_api_1_1, auth_api_1_0]},
-     {auth_api_dets, [], [auth_api_1_1, auth_api_1_0]},
-     {auth_api_mnesia, [], [auth_api_1_1, auth_api_1_0]},
+     {auth_api_dets, [], [auth_api_1_1, auth_api_1_0, auth_directory_isolation]},
+     {auth_api_mnesia, [], [auth_api_1_1, auth_api_1_0, auth_directory_isolation]},
      {security, [], [security_1_1, security_1_0]},
      {logging, [], [disk_log_internal, disk_log_exists,
              disk_log_bad_size, disk_log_bad_file]},
-     {http_1_1, [], [esi_propagate, esi_atom_leak, {group, http_1_1_parallel}] ++ load()},
+     {http_1_1, [], [esi_propagate,
+                     esi_atom_leak,
+                     te_cl_smuggling_reject,
+                     {group, http_1_1_parallel},
+                     cgi_bin_env] ++ load()},
      {http_1_1_parallel, [parallel],
       [host, chunked, expect, cgi, cgi_chunked_encoding_test,
        trace, range, if_modified_since, mod_esi_chunk_timeout,
        esi_put, esi_patch, esi_post, esi_headers]
       ++ http_head() ++ http_get()},
-     {http_1_0, [], [{group, http_1_0_parallel} | load()]},
+     {http_1_0, [], [cgi_bin_env, {group, http_1_0_parallel} | load()]},
      {http_1_0_parallel, [parallel], [host, cgi, trace] ++ http_head() ++ http_get()},
      {http_rel_path_script_alias, [], [cgi]},
+     {http_script_alias_auth, [], [script_alias_auth_bypass]},
      {esi, [], [erl_script_timeout_default,
                 erl_script_timeout_option,
                 erl_script_timeout_proplist,
@@ -168,6 +184,7 @@ http_get() ->
      max_header,
      max_content_length,
      ignore_invalid_header,
+     reject_obs_fold,
      ipv6,
      same_file_name_dir_name
     ].
@@ -179,6 +196,7 @@ load() ->
     ].
 
 init_per_suite(Config) ->
+
     PrivDir = proplists:get_value(priv_dir, Config),
     DataDir = proplists:get_value(data_dir, Config),
     inets_test_lib:stop_apps([inets]),
@@ -275,6 +293,9 @@ init_per_group(http_logging, Config) ->
 init_per_group(http_rel_path_script_alias = Group, Config) ->
     ok = start_apps(Group),
     init_httpd(Group, [{type, ip_comm},{http_version, "HTTP/1.1"}| Config]);
+init_per_group(http_script_alias_auth = Group, Config) ->
+    ok = start_apps(Group),
+    init_httpd(Group, [{type, ip_comm},{http_version, "HTTP/1.1"}| Config]);
 init_per_group(not_sup, Config) ->
     [{http_version, "HTTP/1.1"} | Config];
 init_per_group(Group, Config) when Group == esi ->
@@ -296,6 +317,7 @@ end_per_group(Group, _Config)  when  Group == http_basic;
                                      Group == http_mime_type;
 				     Group == http_mime_and_default_type;
                                      Group == http_mime_types;
+                                     Group == http_script_alias_auth;
                                      Group == esi
 				     ->
     inets:stop();
@@ -388,6 +410,9 @@ init_per_testcase(disk_log_bad_file, Config0) ->
 init_per_testcase(erl_script_timeout_default, Config) ->
     ct:timetrap({seconds, 60}),
     dbg(erl_script_timeout_default, Config, init);
+init_per_testcase(Case, Config) when Case == keepalive_timeout;
+                                    Case == keepalive_timeout_disabled ->
+    dbg(Case, Config, init);
 init_per_testcase(medium = Case, Config) ->
     ct:timetrap({seconds, 150}),
     dbg(Case, Config, init);
@@ -600,6 +625,97 @@ verify_href(Config) when is_list(Config) ->
     [ok = Go(H, "one", "onePassword", [{statuscode, 200}]) || H <- Hrefs],
     ok.
 
+%%--------------------------------------------------------------------
+%% Test that double slashes in the request path do not bypass
+%% mod_auth directory protection (CVE-2026-28808 related).
+%%--------------------------------------------------------------------
+double_slash_auth_bypass() ->
+    [{doc, "Verify that // in request path does not bypass mod_auth"}].
+
+double_slash_auth_bypass(Config) when is_list(Config) ->
+    Version = proplists:get_value(http_version, Config),
+    Host = proplists:get_value(host, Config),
+    %% Without credentials, all these variants must return 401
+    %% (protected by mod_auth directory config for /open/).
+    Paths = [
+        "/open/dummy.html",        %% normal path (baseline)
+        "//open/dummy.html",       %% leading double slash
+        "/open//dummy.html",       %% double slash inside path
+        "///open///dummy.html",    %% triple slashes
+        "/open/./dummy.html"       %% dot segment (should still match)
+    ],
+    [ok = http_status("GET " ++ Path ++ " ", Config,
+                      [{statuscode, 401},
+                       {header, "WWW-Authenticate"}])
+     || Path <- Paths],
+    %% With valid credentials, the same paths must return 200.
+    [ok = auth_status(auth_request(Path, "one", "onePassword", Version, Host),
+                      Config, [{statuscode, 200}])
+     || Path <- Paths],
+    %% Also verify /secret/ with double-slash variants.
+    SecretPaths = [
+        "//secret/dummy.html",
+        "/secret//dummy.html",
+        "///secret/dummy.html"
+    ],
+    [ok = http_status("GET " ++ Path ++ " ", Config,
+                      [{statuscode, 401},
+                       {header, "WWW-Authenticate"}])
+     || Path <- SecretPaths],
+    ok.
+
+%%--------------------------------------------------------------------
+%% Test that case variations in the request path do not bypass
+%% mod_auth directory protection on case-insensitive filesystems.
+%% On Linux (case-sensitive FS) the file won't be found, but the
+%% auth check must still trigger (401) rather than being skipped.
+%%--------------------------------------------------------------------
+case_insensitive_auth_bypass() ->
+    [{doc, "Verify that case variations in path do not bypass mod_auth"}].
+
+case_insensitive_auth_bypass(Config) when is_list(Config) ->
+    %% Without credentials, case-varied paths to protected dirs must
+    %% return 401 (auth required), NOT 404 or 200.
+    %% The caseless flag in mod_auth ensures the directory regex matches
+    %% regardless of case.
+    Paths = [
+        "/Open/dummy.html",        %% capital O
+        "/OPEN/dummy.html",        %% all caps
+        "/Secret/dummy.html",      %% capital S
+        "/SECRET/dummy.html",      %% all caps
+        "/sEcReT/dummy.html"       %% mixed case
+    ],
+    [ok = http_status("GET " ++ Path ++ " ", Config,
+                      [{statuscode, 401},
+                       {header, "WWW-Authenticate"}])
+     || Path <- Paths],
+    ok.
+
+%%--------------------------------------------------------------------
+%% Unit test for httpd_util:collapse_slashes/1
+%%--------------------------------------------------------------------
+auth_path_canonicalization() ->
+    [{doc, "Unit test for httpd_util:collapse_slashes/1"}].
+
+auth_path_canonicalization(Config) when is_list(Config) ->
+    %% Basic collapse cases
+    "/" = httpd_util:collapse_slashes("/"),
+    "/a/b/c" = httpd_util:collapse_slashes("/a/b/c"),
+    "/a/b/c" = httpd_util:collapse_slashes("//a//b//c"),
+    "/a/b/c/" = httpd_util:collapse_slashes("///a///b///c/"),
+    "/open/dummy.html" = httpd_util:collapse_slashes("//open//dummy.html"),
+    "/secret/top_secret/" = httpd_util:collapse_slashes("/secret//top_secret//"),
+    %% Empty string
+    "" = httpd_util:collapse_slashes(""),
+    %% No slashes at all
+    "abc" = httpd_util:collapse_slashes("abc"),
+    %% Single slash preserved
+    "/" = httpd_util:collapse_slashes("//"),
+    "/" = httpd_util:collapse_slashes("///"),
+    %% Mixed content
+    "/foo/bar/baz" = httpd_util:collapse_slashes("/foo///bar//baz"),
+    ok.
+
 auth_api_1_1(Config) when is_list(Config) -> 
     auth_api([{http_version, "HTTP/1.1"} | Config]).
 
@@ -796,6 +912,76 @@ ipv6(Config) when is_list(Config) ->
      end.
 
 %%-------------------------------------------------------------------------
+auth_directory_isolation() ->
+    [{doc, "Verify that per-directory auth namespaces are isolated (GH-1052). "
+      "A user added to /dirA must NOT be able to authenticate against /dirB."}].
+
+auth_directory_isolation(Config) when is_list(Config) ->
+    Version = proplists:get_value(http_version, Config, "HTTP/1.1"),
+    Host = proplists:get_value(host, Config),
+    Port = proplists:get_value(port, Config),
+    Node = proplists:get_value(node, Config),
+    ServerRoot = proplists:get_value(server_root, Config),
+    Prefix = proplists:get_value(auth_prefix, Config),
+
+    %% Directories: <prefix>open requires user "one" or "Aladdin"
+    %%              <prefix>secret requires group "group1" or "group2"
+    OpenDir = Prefix ++ "open",
+    SecretDir = Prefix ++ "secret",
+
+    %% Clean slate
+    remove_users(Node, ServerRoot, Host, Port, Prefix, "open"),
+    remove_users(Node, ServerRoot, Host, Port, Prefix, "secret"),
+
+    %% Add user "one" to the "open" directory
+    true = add_user(Node, ServerRoot, Port, Prefix, "open",
+                  "one", "onePassword", []),
+
+    %% Add user "two" to the "secret" directory and add to group1
+    true = add_user(Node, ServerRoot, Port, Prefix, "secret",
+                  "two", "twoPassword", []),
+    true = add_group_member(Node, ServerRoot, Port, Prefix, "secret",
+                          "two", "group1"),
+
+    %% Test 1: "one" can access /open (require_user includes "one")
+    ok = auth_status(auth_request("/" ++ OpenDir ++ "/",
+                                  "one", "onePassword", Version, Host),
+                     Config, [{statuscode, 200}]),
+
+    %% Test 2: "two" can access /secret (in group1)
+    ok = auth_status(auth_request("/" ++ SecretDir ++ "/",
+                                  "two", "twoPassword", Version, Host),
+                     Config, [{statuscode, 200}]),
+
+    %% Test 3: KEY TEST — "one" must NOT access /secret
+    %% Before fix: 200 (namespace collapsed). After fix: 401.
+    ok = auth_status(auth_request("/" ++ SecretDir ++ "/",
+                                  "one", "onePassword", Version, Host),
+                     Config, [{statuscode, 401}]),
+
+    %% Test 4: "two" must NOT access /open
+    ok = auth_status(auth_request("/" ++ OpenDir ++ "/",
+                                  "two", "twoPassword", Version, Host),
+                     Config, [{statuscode, 401}]),
+
+    %% Test 5: get_user for "one" in /secret returns not found
+    SecretDirectory = filename:join([ServerRoot, "htdocs", SecretDir]),
+    {error, no_such_user} =
+        rpc:call(Node, mod_auth, get_user,
+                 ["one", undefined, Port, SecretDirectory]),
+
+    %% Test 6: get_user for "two" in /open returns not found
+    OpenDirectory = filename:join([ServerRoot, "htdocs", OpenDir]),
+    {error, no_such_user} =
+        rpc:call(Node, mod_auth, get_user,
+                 ["two", undefined, Port, OpenDirectory]),
+
+    %% Cleanup
+    remove_users(Node, ServerRoot, Host, Port, Prefix, "open"),
+    remove_users(Node, ServerRoot, Host, Port, Prefix, "secret"),
+    ok.
+
+%%-------------------------------------------------------------------------
 same_file_name_dir_name() ->
     [{doc,"Test that URI path that has a filename in it is not interpreted as the file"}].
 same_file_name_dir_name(Config) when is_list(Config) ->
@@ -891,6 +1077,50 @@ post_204(Config) ->
 		      {args,       [SockType, Host, Port, TranspOpts]}]})
     end.
 
+%% This test used to make httpd hang
+chunked_invalid_chunk_size(Config) ->
+    Host = proplists:get_value(host, Config),
+    Port =  proplists:get_value(port, Config),
+    SockType = proplists:get_value(type, Config),
+    TranspOpts = transport_opts(SockType, Config),
+    try inets_test_lib:connect_bin(SockType, Host, Port, TranspOpts) of
+        {ok, Socket} ->
+            RequestStr = "POST /cgi-bin/erl/httpd_example:post_chunked HTTP/1.1\r\n" ++
+                         "Host: " ++ Host ++ "\r\n" ++
+                         "Transfer-Encoding: chunked\r\n" ++
+                         "\r\n",
+            io:format("Sending request with invalid chunked encoding: '~p'~n", [RequestStr]),
+            ok = inets_test_lib:send(SockType, Socket, RequestStr),
+            receive
+                {tcp, Socket, Data} ->
+                    io:format("Received response: '~p'~n", [Data]),
+                    ct:fail("Expected server to not send a response yet.")
+                after 1000 ->
+                    ok
+            end,
+            io:format("Sending request with too large header: '~p'~n", ["zz\r\n"]),
+            ok = inets_test_lib:send(SockType, Socket, "zz\r\n"),
+            receive
+                {tcp, Socket, Data2} ->
+                    io:format("Received response: '~p'~n", [Data2]),
+                    case binary:match(Data2, <<"400">>,[]) of
+                        nomatch ->
+                            ct:fail("Expected 400 Bad Request response.");
+                        {_, _} ->
+                            ok
+                    end
+            after 2000 ->
+                    ct:fail(connection_timed_out)
+            end
+    catch
+        T:E:Stk ->
+            ct:fail({connect_failure,
+                    [{type,       T},
+                     {error,      E},
+                     {stacktrace, Stk},
+                     {args,       [SockType, Host, Port, TranspOpts]}]})
+   end.
+
 %%-------------------------------------------------------------------------
 host() ->
     [{doc, "Test host header"}].
@@ -914,11 +1144,53 @@ expect(Config) when is_list(Config) ->
     httpd_1_1:expect(proplists:get_value(type, Config), proplists:get_value(port, Config), 
 		     proplists:get_value(host, Config), proplists:get_value(node, Config)).
 %%-------------------------------------------------------------------------
+te_cl_smuggling_reject() ->
+    [{doc, "Verify that requests with both Transfer-Encoding and "
+      "Content-Length are rejected with 400 (RFC 9112 Section 6.3). "
+      "Prevents CL.TE request smuggling."}].
+
+te_cl_smuggling_reject(Config) when is_list(Config) ->
+    %% Target a resource that accepts POST. A static file answers 501
+    %% regardless of framing, which would hide the difference between an
+    %% accepted and a rejected request.
+    Request = "POST /cgi-bin/erl/httpd_example/post ",
+
+    %% Test 1: Transfer-Encoding before Content-Length
+    ok = http_status(Request,
+                     {"Transfer-Encoding:chunked\r\n"
+                      "Content-Length:10\r\n",
+                      ""},
+                     Config,
+                     [{statuscode, 400}]),
+
+    %% Test 2: Content-Length before Transfer-Encoding
+    ok = http_status(Request,
+                     {"Content-Length:10\r\n"
+                      "Transfer-Encoding:chunked\r\n",
+                      ""},
+                     Config,
+                     [{statuscode, 400}]),
+
+    %% Test 3: Transfer-Encoding alone is fine
+    ok = http_status(Request,
+                     {"Transfer-Encoding:chunked\r\n",
+                      "5\r\nhello\r\n0\r\n\r\n"},
+                     Config,
+                     [{statuscode, 200}]),
+
+    %% Test 4: Content-Length alone is fine
+    ok = http_status(Request,
+                     {"Content-Length:5\r\n",
+                      "hello"},
+                     Config,
+                     [{statuscode, 200}]),
+    ok.
+%%-------------------------------------------------------------------------
 max_clients_1_1() ->
     [{doc, "Test max clients limit"}].
 
 max_clients_1_1(Config) when is_list(Config) -> 
-    do_max_clients([{http_version, "HTTP/1.1"} | Config]).
+    do_max_clients([{http_version, "HTTP/1.1"} | Config], 1).
 
 %%-------------------------------------------------------------------------
 put_not_sup() ->
@@ -1139,6 +1411,34 @@ cgi(Config) when is_list(Config) ->
 		     [{statuscode, 200},
 		      {no_header, "cache-control"}]).
 %%-------------------------------------------------------------------------
+script_alias_auth_bypass() ->
+    [{doc, "Test that mod_auth correctly protects script_alias directories "
+           "outside DocumentRoot (CVE-2026-28808)"}].
+script_alias_auth_bypass(Config) when is_list(Config) ->
+    Version = proplists:get_value(http_version, Config),
+    Host = proplists:get_value(host, Config),
+    Script =
+        case os:type() of
+            {win32, _} -> "printenv.bat";
+            _ -> "printenv.sh"
+        end,
+    %% Unauthenticated request must be rejected with 401
+    ok = http_status("GET /http_script_alias_auth/" ++ Script ++ " ", Config,
+                     [{statuscode, 401},
+                      {header, "WWW-Authenticate"}]),
+    %% Authenticated request must succeed
+    ok = auth_status(
+           auth_request("/http_script_alias_auth/" ++ Script, "one", "onePassword",
+                        Version, Host),
+           Config,
+           [{statuscode, 200}]),
+    %% Wrong password must be rejected
+    ok = auth_status(
+           auth_request("/http_script_alias_auth/" ++ Script, "one", "WrongPassword",
+                        Version, Host),
+           Config,
+           [{statuscode, 401}]).
+%%-------------------------------------------------------------------------
 cgi_chunked_encoding_test() ->  
     [{doc, "Test chunked encoding together with mod_cgi "}].
 cgi_chunked_encoding_test(Config) when is_list(Config) ->
@@ -1291,6 +1591,51 @@ alias(Config) when is_list(Config) ->
     [Test301(T) || T <- TestURIs301],
     ok.
 
+cgi_bin_env() ->
+[{doc, "Test whether HTTP_PROXY header is not applied to an environment
+that runs the cgi script"}].
+cgi_bin_env(Config) ->
+    Proto = case proplists:get_value(type, Config, undefined) =:= ssl of
+                true -> https;
+                _ -> http
+            end,
+    Cgi = case os:type() of
+        {win32, _} ->
+            "printenv.bat";
+        _ ->
+            "printenv.sh"
+    end,
+    HttpOpts = case Proto of
+                   https -> [?SSL_NO_VERIFY];
+                   _ -> []
+               end,
+    RandomString = base64:encode(crypto:strong_rand_bytes(9)),
+    Endpoint = "/cgi-bin/" ++ Cgi,
+    Env = os:env(),
+    %% Grab the value of HTTP_PROXY from the environment before the request
+    HttpProxyEnv = proplists:get_value("HTTP_PROXY", Env, undefined),
+    Url = url(Proto, Endpoint, Config),
+    {ok, {_Status, _Headers, Body}} = httpc:request(get, {Url, [{"PROXY", RandomString},
+                                                                {"proxy", RandomString}]},
+                                                    HttpOpts, []),
+    %% The script prints the system's environment to the body so we need to
+    %% grab the value of interest
+    HttpEnv = re:split(Body, "\n"),
+    BinSize = size(<<"HTTP_PROXY">>) * 8,
+    %% Filter keys of interest, while converting to proplist
+    EnvProp = [{binary_to_list(Key), binary_to_list(Val)} ||
+                  <<Key:BinSize/bitstring, "=", Val/bitstring>> <- HttpEnv,
+                  Key =:= <<"HTTP_PROXY">>],
+    %% EnvProp should only have HTTP_PROXY or be an empty list
+    RespHttpProxyEnv = proplists:get_value("HTTP_PROXY", EnvProp, undefined),
+    case HttpProxyEnv of
+        undefined ->
+            %% HTTP_PROXY was not set before the request
+            ?assertEqual([], EnvProp);
+        _ ->
+            %% HTTP_PROXY was set, so ensure it's the same in the body
+            ?assertEqual(HttpProxyEnv, RespHttpProxyEnv)
+    end.
 %%-------------------------------------------------------------------------
 actions() ->
     [{doc, "Test mod_actions"}].
@@ -1469,8 +1814,36 @@ ignore_invalid_header(Config) when is_list(Config) ->
                 {"https://"  ++ Host ++  ":" ++ integer_to_list(Port) ++ "/cgi-bin/erl/httpd_example:ignore_invalid_header",
                  [{"Host", "localhost"},{"Te", ""}, {"Content-Length ", "0"}], [{ssl, [{verify, verify_none} | Conf]}]}
         end,
-    {ok,{{_,204,_}, _, _}}
+    %% RFC 7230 Section 3.2.4: No whitespace allowed between header
+    %% field-name and colon. Server MUST reject with 400.
+    {ok,{{_,400,_}, _, _}}
         = httpc:request(get, {Url, Header}, [{timeout, 45000} | Opts], [{headers_as_is, true}]).
+
+%%-------------------------------------------------------------------------
+reject_obs_fold() ->
+    [{doc, "RFC 9112 Section 5.2 - obs-fold MUST be rejected with 400"}].
+reject_obs_fold(Config) when is_list(Config) ->
+    Version = proplists:get_value(http_version, Config),
+    Host = proplists:get_value(host, Config),
+    Port = proplists:get_value(port, Config),
+    Type = proplists:get_value(type, Config),
+    Node = proplists:get_value(node, Config),
+    %% SP obs-fold: line starting with space after CRLF
+    ok = httpd_test_lib:verify_request(
+           Type, Host, Port, Node,
+           "GET /index.html " ++ Version ++ "\r\n" ++
+               "Host:" ++ Host ++ "\r\n" ++
+               "X-Foo: bar\r\n" ++
+               " Transfer-Encoding: chunked\r\n\r\n",
+           [{statuscode, 400}, {version, Version}]),
+    %% HTAB obs-fold: line starting with tab after CRLF
+    ok = httpd_test_lib:verify_request(
+           Type, Host, Port, Node,
+           "GET /index.html " ++ Version ++ "\r\n" ++
+               "Host:" ++ Host ++ "\r\n" ++
+               "X-Foo: bar\r\n" ++
+               "\tX-Injected: evil\r\n\r\n",
+           [{statuscode, 400}, {version, Version}]).
 
 %%-------------------------------------------------------------------------
 security_1_1(Config) when is_list(Config) -> 
@@ -1788,6 +2161,36 @@ reload_config_file(Config) when is_list(Config) ->
     ok = httpd:reload_config(HttpdConf, non_disturbing),
     "httpd_test_new" = proplists:get_value(server_name, httpd:info(Server)).
 %%-------------------------------------------------------------------------
+%% Verify that a reload with invalid config (non-existing server_root)
+%% returns an error and leaves the server running with old config intact.
+%% Regression test for ERIERL-1314.
+reload_invalid_config_survives(Config) when is_list(Config) ->
+    ServerRoot = proplists:get_value(server_root, Config),
+    DocRoot = proplists:get_value(doc_root, Config),
+    HttpdConfig = [{port, 0},
+                   {server_name, "httpd_survive_test"},
+                   {server_root, ServerRoot},
+                   {document_root, DocRoot},
+                   {bind_address, "localhost"}],
+    {ok, Server} = inets:start(httpd, HttpdConfig),
+    Info = httpd:info(Server),
+    Port = proplists:get_value(port, Info),
+
+    %% Attempt reload with non-existing server_root and different server_name
+    BadConfig = [{port, Port},
+                 {server_name, "httpd_should_not_appear"},
+                 {server_root, "/tmp/non_existing_erierl1314"},
+                 {document_root, DocRoot},
+                 {bind_address, "localhost"}],
+    {error, {invalid_option, {non_existing, {server_root, _}}}} =
+        httpd:reload_config(BadConfig, disturbing),
+
+    %% Server must still be alive with the OLD config
+    ?assert(is_process_alive(Server)),
+    "httpd_survive_test" = proplists:get_value(server_name, httpd:info(Server)),
+
+    inets:stop(httpd, Server).
+%%-------------------------------------------------------------------------
 mime_types_format(Config) when is_list(Config) -> 
     DataDir = proplists:get_value(data_dir, Config),
     MimeTypes = filename:join(DataDir, "mime_types.txt"),
@@ -1897,6 +2300,145 @@ mime_types_format(Config) when is_list(Config) ->
      {"cpt","application/mac-compactpro"},
      {"hqx","application/mac-binhex40"}]} = httpd_conf:load_mime_types(MimeTypes).
 
+%%-------------------------------------------------------------------------
+keepalive_timeout() ->
+    [{doc, "A client that stalls the connection must be timed out (Slowloris)."},
+     {timetrap, {seconds, 30}}].
+keepalive_timeout(Config) when is_list(Config) ->
+    inets_test_lib:start_apps([inets]),
+    PrivDir = proplists:get_value(priv_dir, Config),
+    DocRoot = filename:join(PrivDir, "keepalive_timeout_htdocs"),
+    ok = file:make_dir(DocRoot),
+    ok = file:write_file(filename:join(DocRoot, "index.html"), <<"OK">>),
+    KeepAliveTimeout = 2,
+    {ok, Pid} = inets:start(httpd, [
+        {port, 0},
+        {server_name, "body_timeout_test"},
+        {server_root, PrivDir},
+        {document_root, DocRoot},
+        {bind_address, {127,0,0,1}},
+        {keep_alive_timeout, KeepAliveTimeout},
+        {minimum_bytes_per_second, false},
+        {modules, [mod_get]}
+    ]),
+    Info = httpd:info(Pid),
+    {port, Port} = lists:keyfind(port, 1, Info),
+    T1 = os:timestamp(),
+    %% Open the connection and stall
+    {ok, Sock1} = gen_tcp:connect("127.0.0.1", Port, [binary, {active, false}]),
+
+    %% Server should timeout and respond with 408 within ~2 seconds
+    {error, closed} = gen_tcp:recv(Sock1, 0, 5000),
+    T2 = os:timestamp(),
+    case timer:now_diff(T2, T1)/1_000_000 of
+        T when T < KeepAliveTimeout * 0.9 orelse T > KeepAliveTimeout * 1.1 ->
+            ct:fail("Timeout outside of allowed error");
+        _ -> ok
+    end,
+
+    %% Open the connection, send a valid request, then stall
+    {ok, Sock2} = gen_tcp:connect("127.0.0.1", Port, [binary, {active, true}]),
+    ok = gen_tcp:send(Sock2, <<"GET /index.html HTTP/1.1\r\nHost: localhost\r\n"
+                              "Content-Length: 1\r\n\r\nX">>),
+    %% receive the body first, then flush the rest
+    receive
+            {tcp, _, Bin1} when binary_part(Bin1, {byte_size(Bin1), -2}) =:= <<"OK">> -> ok
+    after KeepAliveTimeout * 1000 ->
+                ct:fail("Response body not received within the timeout")
+    end,
+    inets_test_lib:flush(),
+
+    timer:sleep(KeepAliveTimeout * 1000),
+    {error, closed} = gen_tcp:send(Sock2, <<"GET /index.html HTTP/1.1\r\nHost: localhost\r\n"
+                                            "Content-Length: 1\r\n\r\nX">>),
+
+    %% Connect, and send one byte, then stall over the timeout value, then continue.
+    %% First byte should cancel the timeout
+    %% Timeout should be reactivated afterwards
+    {ok, Sock3} = gen_tcp:connect("127.0.0.1", Port, [binary, {active, true}]),
+    ok = gen_tcp:send(Sock3, <<"G">>),
+    timer:sleep(KeepAliveTimeout*2),
+    ok = gen_tcp:send(Sock3, <<"ET /index.html HTTP/1.1\r\nHost: localhost\r\n"
+                               "Content-Length: 1\r\n\r\nX">>),
+    receive
+            {tcp, _, Bin2} when binary_part(Bin2, {byte_size(Bin2), -2}) =:= <<"OK">> -> ok
+    after KeepAliveTimeout * 1000 ->
+                ct:fail("Response body not received within the timeout")
+    end,
+    inets_test_lib:flush(),
+    timer:sleep(KeepAliveTimeout * 1000),
+    {error, closed} = gen_tcp:send(Sock3, <<"GET /index.html HTTP/1.1\r\nHost: localhost\r\n"
+                                       "Content-Length: 1\r\n\r\nX">>),
+    inets:stop(httpd, Pid),
+    inets_test_lib:stop_apps([inets]).
+
+%%-------------------------------------------------------------------------
+keepalive_timeout_disabled() ->
+    [{doc, "keep_alive_timeout must not be applied when {keep_alive, false} "
+           "is configured: a client that pauses between the headers and the "
+           "body for longer than keep_alive_timeout must still get its "
+           "request served, not a 408 response."},
+     {timetrap, {seconds, 180}}].
+keepalive_timeout_disabled(Config) when is_list(Config) ->
+    inets_test_lib:start_apps([inets]),
+    PrivDir = proplists:get_value(priv_dir, Config),
+    DocRoot = filename:join(PrivDir, "keepalive_disabled_htdocs"),
+
+    ok = file:make_dir(DocRoot),
+    ok = file:write_file(filename:join(DocRoot, "index.html"), <<"OK">>),
+    %% First test interoptions dependency
+    {error, invalid_keep_alive_timeout} = inets:start(httpd, [
+        {port, 0},
+        {server_name, "keepalive_disabled_test"},
+        {server_root, PrivDir},
+        {document_root, DocRoot},
+        {bind_address, {127,0,0,1}},
+        {keep_alive, false},
+        {keep_alive_timeout, 2},
+        {minimum_bytes_per_second, false},
+        {modules, [mod_esi]},
+        {erl_script_alias, {"/erl", [httpd_example]}}
+    ]),
+    {ok, Pid0} = inets:start(httpd, [
+        {port, 0},
+        {server_name, "keepalive_disabled_test"},
+        {server_root, PrivDir},
+        {document_root, DocRoot},
+        {bind_address, {127,0,0,1}},
+        {keep_alive_timeout, 2}, %%% keep_alive is true by default
+        {minimum_bytes_per_second, false},
+        {modules, [mod_esi]},
+        {erl_script_alias, {"/erl", [httpd_example]}}
+    ]),
+    inets:stop(httpd, Pid0),
+
+    {ok, Pid} = inets:start(httpd, [
+        {port, 0},
+        {server_name, "keepalive_disabled_test"},
+        {server_root, PrivDir},
+        {document_root, DocRoot},
+        {bind_address, {127,0,0,1}},
+        {keep_alive, false},
+        {minimum_bytes_per_second, false},
+        {modules, [mod_get]}
+    ]),
+    Info = httpd:info(Pid),
+    {port, Port} = lists:keyfind(port, 1, Info),
+
+    {ok, Sock} = gen_tcp:connect("127.0.0.1", Port, [binary, {active, true}]),
+    %% Send the request after the default value of keep_alive_timeout
+    ct:sleep({seconds, 150}),
+
+    ok = gen_tcp:send(Sock, <<"GET /index.html HTTP/1.1\r\nHost: localhost\r\n\r\n">>),
+    % {ok, Response} = gen_tcp:recv(Sock, 0, 5000),
+    receive
+            {tcp, _, Bin2} when binary_part(Bin2, {byte_size(Bin2), -2}) =:= <<"OK">> -> ok
+    after 10_000 ->
+                ct:fail("Response body not received")
+    end.
+
+%%-------------------------------------------------------------------------
+
 erl_script_timeout_default(Config) when is_list(Config) ->
     ServerConfig = [
         {modules, [mod_esi]},
@@ -1980,13 +2522,40 @@ tls_alert(Config) when is_list(Config) ->
     Port = proplists:get_value(port, Config),    
     {error, {tls_alert, _}} = ssl:connect("localhost", Port, [{verify, verify_peer} | SSLOpts]).
 
+%%-------------------------------------------------------------------------
+multiple_content_length_header() ->
+    [{doc, "Test Content-Length header"}].
+
+multiple_content_length_header(Config) when is_list(Config) ->
+    ok = http_status("POST / ",
+                     {"Content-Length:0" ++ "\r\n",
+                      ""},
+                     [{http_version, "HTTP/1.1"} |Config],
+                     [{statuscode, 501}]),
+    ok = http_status("POST / ",
+                     {"Content-Length:0" ++ "\r\n" ++
+                      "Content-Length:0" ++ "\r\n",
+                      ""},
+                     [{http_version, "HTTP/1.1"} |Config],
+                     [{statuscode, 501}]),
+    ok = http_status("POST / ",
+                     {"Content-Length:1" ++ "\r\n" ++
+                      "Content-Length:0" ++ "\r\n",
+                      "Z"},
+                     [{http_version, "HTTP/1.1"} |Config],
+                     [{statuscode, 400}]).
 %%--------------------------------------------------------------------
 %% Internal functions -----------------------------------
 %%--------------------------------------------------------------------
+url(https, End, Config) ->
+    ?URL_START_HTTPS ++ url(End, Config);
 url(http, End, Config) ->
+    ?URL_START ++ url(End, Config).
+
+url(End, Config) ->
     Port = proplists:get_value(port, Config),
     {ok,Host} = inet:gethostname(),
-    ?URL_START ++ Host ++ ":" ++ integer_to_list(Port) ++ End.
+    Host ++ ":" ++ integer_to_list(Port) ++ End.
 
 http_get_url(Port0, HeaderDelay, ChunkDelay, BadChunkDelay) ->
     {ok, Host} = inet:gethostname(),
@@ -2020,16 +2589,27 @@ verify_timeout(Info, Expected) ->
             ct:fail("Bad Timeout - Expected: ~p Got: ~p", [Expected, Timeout])
     end.
 
-do_max_clients(Config) ->
+do_max_clients(Config, MaxClients) ->
     Version = proplists:get_value(http_version, Config),
     Host    = proplists:get_value(host, Config),
     Port    = proplists:get_value(port, Config), 
     Type    = proplists:get_value(type, Config),
     
     Request = http_request("GET /index.html ", Version, Host),
-    BlockRequest = http_request("GET /cgi_bin/erl/httpd_example:delay ", Version, Host),
-    {ok, Socket} = inets_test_lib:connect_bin(Type, Host, Port, transport_opts(Type, Config)),
-    inets_test_lib:send(Type, Socket, BlockRequest),
+    BlockRequest = "GET /index.html " ++ Version ++ "\r\n",
+
+    Connections =
+        [begin
+            {ok, Socket} = inets_test_lib:connect_bin(Type, Host, Port, transport_opts(Type, Config)),
+            inets_test_lib:send(Type, Socket, BlockRequest),
+            Socket
+        end || _ <- lists:seq(1, MaxClients)],
+
+    wait_for_N(fun connection_children/0, MaxClients, 5000),
+
+    [ct:log("~p: ~p", [Name, supervisor:count_children(whereis(Name))]) || Name <- registered(),
+           lists:prefix("httpd_connection_sup", atom_to_list(Name))],
+
     ok = httpd_test_lib:verify_request(Type, Host, 
 				       Port,
 				       transport_opts(Type, Config),
@@ -2037,12 +2617,11 @@ do_max_clients(Config) ->
 				       Request,
 				       [{statuscode, 503},
 					{version, Version}]),
-    receive 
-	{_, Socket, _Msg} ->
-	    ok
-    end,
-    inets_test_lib:close(Type, Socket),
-    ct:sleep(5000), %% Avoid possible timing issues
+
+    [ inets_test_lib:close(Type, Socket) || Socket <- Connections ],
+
+    wait_for_N(fun connection_children/0, 0, 5000),
+    
     ok = httpd_test_lib:verify_request(Type, Host, 
 				       Port,
 				       transport_opts(Type, Config),
@@ -2051,8 +2630,27 @@ do_max_clients(Config) ->
 				       [{statuscode, 200},
 					{version, Version}]).
 
+connection_children() ->
+    lists:sum([proplists:get_value(workers, supervisor:count_children(whereis(Name))) || Name <- registered(),
+           lists:prefix("httpd_connection_sup", atom_to_list(Name))]).
+
+wait_for_N(Fun, N, Timeout) ->
+    case Fun() of
+        N ->
+            ok;
+        _ ->
+            case Timeout > 0 of
+                true ->
+                    ct:sleep(100),
+                    wait_for_N(Fun, N, Timeout - 100);
+                false ->
+                    ct:fail(timeout)
+            end
+    end.
+
 setup_server_dirs(ServerRoot, DocRoot, DataDir) ->
     CgiDir =  filename:join(ServerRoot, "cgi-bin"),
+    ExtCgiDir = filename:join(ServerRoot, "ext-cgi-bin"),
     AuthDir =  filename:join(ServerRoot, "auth"),
     PicsDir =  filename:join(ServerRoot, "icons"),
     ConfigDir =  filename:join(ServerRoot, "config"),
@@ -2060,6 +2658,7 @@ setup_server_dirs(ServerRoot, DocRoot, DataDir) ->
     ok = file:make_dir(ServerRoot),
     ok = file:make_dir(DocRoot),
     ok = file:make_dir(CgiDir),
+    ok = file:make_dir(ExtCgiDir),
     ok = file:make_dir(AuthDir),
     ok = file:make_dir(PicsDir),
     ok = file:make_dir(ConfigDir),
@@ -2073,6 +2672,7 @@ setup_server_dirs(ServerRoot, DocRoot, DataDir) ->
     inets_test_lib:copy_dirs(DocSrc, DocRoot),
     inets_test_lib:copy_dirs(AuthSrc, AuthDir),
     inets_test_lib:copy_dirs(CgiSrc, CgiDir),
+    inets_test_lib:copy_dirs(CgiSrc, ExtCgiDir),
     inets_test_lib:copy_dirs(PicsSrc, PicsDir),
     inets_test_lib:copy_dirs(ConfigSrc, ConfigDir),
 
@@ -2091,7 +2691,13 @@ setup_server_dirs(ServerRoot, DocRoot, DataDir) ->
     EnvCGI =  filename:join([ServerRoot, "cgi-bin", "printenv.sh"]),
     {ok, FileInfo1} = file:read_file_info(EnvCGI),
     ok = file:write_file_info(EnvCGI,
-			      FileInfo1#file_info{mode = 8#00755}).
+			      FileInfo1#file_info{mode = 8#00755}),
+
+    %% Set permissions for ext-cgi-bin scripts (outside DocumentRoot)
+    ExtEnvCGI = filename:join([ServerRoot, "ext-cgi-bin", "printenv.sh"]),
+    {ok, FileInfo2} = file:read_file_info(ExtEnvCGI),
+    ok = file:write_file_info(ExtEnvCGI,
+                              FileInfo2#file_info{mode = 8#00755}).
 
 setup_tmp_dir(PrivDir) ->
     TmpDir =  filename:join(PrivDir, "tmp"),
@@ -2130,6 +2736,7 @@ start_apps(Group) when  Group == http_basic;
                         Group == http_mime_and_default_type;
                         Group == http_mime_types;
                         Group == http_rel_path_script_alias;
+                        Group == http_script_alias_auth;
                         Group == http_not_sup;
                         Group == http_mime_types;
                         Group == esi ->
@@ -2180,20 +2787,16 @@ server_config(http_post, Config) ->
 server_config(https_reload, Config) ->
     [{keep_alive_timeout, 2}]  ++ server_config(https, Config);
 server_config(http_limit, Config) ->
-    Conf = [{max_clients, 1},
-            {disable_chunked_transfer_encoding_send, true},
-	    %% Make sure option checking code is run
-	    {max_content_length, 100000002}]  ++ server_config(http, Config),
-    ct:log("Received message ~p~n", [Conf]),
-    Conf;
+    [{max_clients, 1},
+     {disable_chunked_transfer_encoding_send, true},
+     %% Make sure option checking code is run
+     {max_content_length, 100000002}]  ++ server_config(http, Config);
 server_config(http_custom, Config) ->
     [{customize, ?MODULE}]  ++ server_config(http, Config);
 server_config(https_custom, Config) ->
     [{customize, ?MODULE}]  ++ server_config(https, Config);
 server_config(https_limit, Config) ->
-    [{max_clients, 1},
-     {disable_chunked_transfer_encoding_send, true}
-    ]  ++ server_config(https, Config);
+    [{max_clients, 1},{disable_chunked_transfer_encoding_send, true}]  ++ server_config(https, Config);
 server_config(http_basic_auth, Config) ->
     ServerRoot = proplists:get_value(server_root, Config),
     auth_conf(ServerRoot)  ++  server_config(http, Config);
@@ -2249,6 +2852,20 @@ server_config(http_erl_script_alias_all, Config) ->
 server_config(http_rel_path_script_alias, Config) ->
     ServerRoot = proplists:get_value(server_root, Config),
     config_template(Config, ServerRoot, "./cgi-bin/", [httpd_example, io]);
+server_config(http_script_alias_auth, Config) ->
+    ServerRoot = proplists:get_value(server_root, Config),
+    %% CGI dir is outside DocumentRoot (sibling under ServerRoot)
+    ExtCgiDir = filename:join(ServerRoot, "ext-cgi-bin") ++ "/",
+    [{modules, [mod_alias, mod_auth, ?MODULE, mod_get, mod_head]},
+     {logger, [{error, httpd_test}]},
+     {script_alias, {"/http_script_alias_auth/", ExtCgiDir}},
+     {directory, {filename:join(ServerRoot, "ext-cgi-bin"),
+                  [{auth_type, plain},
+                   {auth_name, "Protected CGI"},
+                   {auth_user_file, filename:join(ServerRoot, "auth/passwd")},
+                   {auth_group_file, filename:join(ServerRoot, "auth/group")},
+                   {require_user, ["one", "Aladdin"]}]}}
+    ] ++ server_config(http, Config);
 server_config(https, Config) ->
     SSLConf = proplists:get_value(ssl_conf, Config),
     ServerConf = proplists:get_value(server_config, SSLConf),
@@ -2268,6 +2885,7 @@ config_template(Config, ServerRoot, ScriptPath, Modules) ->
      {ipfamily, proplists:get_value(ipfamily, Config)},
      {max_header_size, 256},
      {max_header_action, close},
+     {max_clients, proplists:get_value(max_clients, Config, 1000)},
      {directory_index, ["index.html", "welcome.html"]},
      {mime_types, [{"html","text/html"},{"htm","text/html"}, {"shtml","text/html"},
 		   {"gif", "image/gif"}]},
@@ -2336,9 +2954,25 @@ do(ModData) ->
             ok;
         _ ->
             {already_sent, Status, _Size} = proplists:get_value(response, ModData#mod.data),
-            propagate_test ! {status, Status}              
+            propagate_test ! {status, Status}
     end,
-    {proceed, ModData#mod.data}.
+    case ModData#mod.request_uri of
+        "/http_script_alias_auth/" ++ _ ->
+            case proplists:get_value(status, ModData#mod.data) of
+                {_StatusCode, _PhraseArgs, _Reason} ->
+                    {proceed, ModData#mod.data};
+                undefined ->
+                    case proplists:get_value(response, ModData#mod.data) of
+                        undefined ->
+                            Body = "<html>script_alias_auth_bypass test ok</html>",
+                            {proceed, [{response, {200, Body}} | ModData#mod.data]};
+                        _Response ->
+                            {proceed, ModData#mod.data}
+                    end
+            end;
+        _ ->
+            {proceed, ModData#mod.data}
+    end.
 
 not_sup_conf() ->
     [{modules, [mod_get]}].
@@ -2558,7 +3192,7 @@ transport_opts(ssl, Config) ->
     ClientConf = proplists:get_value(client_config, SSLConf),
     [proplists:get_value(ipfamily, Config) | ClientConf];
 transport_opts(_, Config) ->
-    [proplists:get_value(ipfamily, Config)].
+    [proplists:get_value(ipfamily, Config, inet)].
 
 
 %%% mod_range

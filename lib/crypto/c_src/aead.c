@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2010-2021. All Rights Reserved.
+ * Copyright Ericsson AB 2010-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -107,6 +107,8 @@ ERL_NIF_TERM aead_cipher_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]
 
     if (EVP_CipherInit_ex(ctx, cipher, NULL, NULL, NULL, encflg) != 1)
         {ret = EXCP_ERROR(env, "CipherInit failed"); goto done;}
+    if (!EVP_CIPHER_CTX_set_key_length(ctx, (int)key.size))
+        {ret = EXCP_BADARG_N(env, 1, "Bad Key length"); goto done;}
     if (EVP_CIPHER_CTX_ctrl(ctx, cipherp->extra.aead.ctx_ctrl_set_ivlen, (int)iv.size, NULL) != 1)
         {ret = EXCP_BADARG_N(env, 2, "Bad IV length"); goto done;}
 

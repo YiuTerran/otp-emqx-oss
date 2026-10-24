@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2017-2023. All Rights Reserved.
+%% Copyright Ericsson AB 2017-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -988,6 +988,8 @@ skip_if_unsup(Type, Config) ->
     end.
 
 
+pkey_supported(dsa) ->
+    pkey_supported(dss);
 pkey_supported(Type) ->
     lists:member(Type, proplists:get_value(public_keys, crypto:supports(), [])).
 

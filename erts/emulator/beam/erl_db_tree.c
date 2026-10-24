@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1998-2024. All Rights Reserved.
+ * Copyright Ericsson AB 1998-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -3499,7 +3499,9 @@ int db_lookup_dbterm_tree_common(Process *p, DbTable *tbl, TreeDbTerm **root,
             int arity = arityval(*objp);
             Eterm *htop, *hend;
 
-            ASSERT(arity >= tbl->common.keypos);
+            if (arity < tbl->common.keypos) {
+                return 0;
+            }
             htop = HAlloc(p, arity + 1);
             hend = htop + arity + 1;
             sys_memcpy(htop, objp, sizeof(Eterm) * (arity + 1));

@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2021-2024. All Rights Reserved.
+ * Copyright Ericsson AB 2021-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -55,12 +55,15 @@ BeamAssemblerCommon::BeamAssemblerCommon(BaseAssembler &assembler_)
                           8);
     ERTS_ASSERT(!err && "Failed to create .rodata section");
 
+    code.setErrorHandler(this);
+}
+
+void BeamAssemblerCommon::lateInit() {
 #ifdef DEBUG
     assembler.addDiagnosticOptions(DiagnosticOptions::kValidateAssembler);
 #endif
     assembler.addEncodingOptions(EncodingOptions::kOptimizeForSize |
                                  EncodingOptions::kOptimizedAlign);
-    code.setErrorHandler(this);
 }
 
 BeamAssemblerCommon::~BeamAssemblerCommon() {
@@ -397,7 +400,7 @@ void *BeamModuleAssembler::register_metadata(const BeamCodeHeader *header) {
         }
 
         n = erts_snprintf(name_buffer,
-                          1024,
+                          sizeof(name_buffer),
                           "%T:%T/%d",
                           ci->mfa.module,
                           ci->mfa.function,
@@ -1284,8 +1287,8 @@ Eterm beam_jit_build_argument_list(Process *c_p, const Eterm *regs, int arity) {
 Export *beam_jit_handle_unloaded_fun(Process *c_p,
                                      Eterm *reg,
                                      int arity,
-                                     Eterm fun_thing) {
-    ErtsCodeIndex code_ix = erts_active_code_ix();
+                                     Eterm fun_thing,
+                                     ErtsCodeIndex code_ix) {
     Eterm module, args;
     ErlFunThing *funp;
     ErlFunEntry *fe;

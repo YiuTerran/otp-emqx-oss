@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2008-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2008-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -72,6 +72,8 @@
          kex_error/1,
          interrupted_send/1,
          max_channels_option/1,
+         max_channels_to_server/1,
+         max_channels_from_server/1,
          no_sensitive_leak/1,
          ptty_alloc/1,
          ptty_alloc_default/1,
@@ -106,6 +108,11 @@
          start_shell_sock_daemon_exec_multi/1,
          start_shell_sock_exec_fun/1,
          start_subsystem_on_closed_channel/1,
+         start_subsystem_on_channel_with_subsystem/1,
+         start_subsystem_on_channel_with_pty_req/1,
+         start_subsystem_on_channel_with_shell/1,
+         start_subsystem_on_channel_with_exec/1,
+         start_subsystem_on_channel_with_env/1,
          stop_listener/1,
          trap_exit_connect/1,
          trap_exit_daemon/1,
@@ -181,7 +188,14 @@ all() ->
      stop_listener,
      no_sensitive_leak,
      start_subsystem_on_closed_channel,
+     start_subsystem_on_channel_with_subsystem,
+     start_subsystem_on_channel_with_pty_req,
+     start_subsystem_on_channel_with_shell,
+     start_subsystem_on_channel_with_exec,
+     start_subsystem_on_channel_with_env,
      max_channels_option,
+     max_channels_to_server,
+     max_channels_from_server,
      handler_down_before_open
     ].
 groups() ->
@@ -350,7 +364,7 @@ get_value(Key, List) ->
 print_interesting_events([], Cnt) ->
     {ok, Cnt};
 print_interesting_events([#{level := Level} = Event | Tail], Cnt)
-  when Level /= info, Level /= notice ->
+  when Level /= info, Level /= notice, Level /= debug ->
     ct:log("------------~nInteresting event found:~n~p~n==========~n", [Event]),
     print_interesting_events(Tail, Cnt + 1);
 print_interesting_events([_|Tail], Cnt) ->
@@ -359,6 +373,12 @@ print_interesting_events([_|Tail], Cnt) ->
 verify_events(_TestCase, 0) -> ok;
 verify_events(no_sensitive_leak, 1) -> ok;
 verify_events(max_channels_option, 3) -> ok;
+verify_events(max_channels_to_server, 1) -> ok;
+verify_events(max_channels_to_server, 2) -> ok;
+verify_events(max_channels_to_server, 3) -> ok;
+verify_events(max_channels_from_server, 1) -> ok;
+verify_events(max_channels_from_server, 2) -> ok;
+verify_events(max_channels_from_server, 3) -> ok;
 verify_events(_TestCase, EventNumber) when EventNumber > 0->
     {fail, lists:flatten(
              io_lib:format("unexpected event cnt: ~s",
@@ -1633,6 +1653,8 @@ gracefull_invalid_long_start_no_nl(Config) when is_list(Config) ->
     end.
 
 kex_error(Config) ->
+    #{level := Level} = logger:get_primary_config(),
+    ok = logger:set_primary_config(level, debug),
     PrivDir = proplists:get_value(priv_dir, Config),
     UserDir = filename:join(PrivDir, nopubkey), % to make sure we don't use public-key-auth
     file:make_dir(UserDir),
@@ -1653,6 +1675,10 @@ kex_error(Config) ->
                                    ok % Other msg
                            end,
                            self()),
+    Cleanup = fun() ->
+                      ok = logger:remove_handler(kex_error),
+                      ok = logger:set_primary_config(level, Level)
+              end,
     try
         ssh_test_lib:connect(Host, Port, [{silently_accept_hosts, true},
                                           {user, "foo"},
@@ -1670,7 +1696,7 @@ kex_error(Config) ->
             %% ok
             receive
                 {Ref, ErrMsgTxt} ->
-                    ok = logger:remove_handler(kex_error),
+                    Cleanup(),
                     ct:log("ErrMsgTxt = ~n~s", [ErrMsgTxt]),
                     Lines = lists:map(fun string:trim/1, string:tokens(ErrMsgTxt, "\n")),
                     OK = (lists:all(fun(S) -> lists:member(S,Lines) end,
@@ -1688,12 +1714,12 @@ kex_error(Config) ->
                             ct:fail("unexpected error text msg", [])
                     end
             after 20000 ->
-                    ok = logger:remove_handler(kex_error),
+                    Cleanup(),
                     ct:fail("timeout", [])
             end;
 
         error:{badmatch,{error,_}} ->
-            ok = logger:remove_handler(kex_error),
+            Cleanup(),
             ct:fail("unexpected error msg", [])
     end.
 
@@ -1826,23 +1852,29 @@ no_sensitive_leak(Config) ->
         {_, _,   0} -> ok;
         {_, _, Nt0} -> ct:fail("Leak in ~p cases!", [Nt0])
     end.
-    
-start_subsystem_on_closed_channel(Config) ->
+
+start_server_and_connect_client(Config) ->
+    start_server_and_connect_client(Config, []).
+start_server_and_connect_client(Config, DaemonOpts) ->
     PrivDir = proplists:get_value(priv_dir, Config),
     UserDir = filename:join(PrivDir, nopubkey), % to make sure we don't use public-key-auth
     file:make_dir(UserDir),
     SysDir = proplists:get_value(data_dir, Config),
     {Pid, Host, Port} = ssh_test_lib:daemon([{system_dir, SysDir},
-					     {user_dir, UserDir},
-					     {password, "morot"},
-					     {subsystems, [{"echo_n", {ssh_echo_server, [4000000]}}]}]),
+                                             {user_dir, UserDir},
+                                             {password, "morot"},
+                                             {subsystems, [{"echo_n", {ssh_echo_server, [4000000]}}]}] ++ DaemonOpts),
 
     ConnectionRef = ssh_test_lib:connect(Host, Port, [{silently_accept_hosts, true},
-						      {user, "foo"},
-						      {password, "morot"},
-						      {user_interaction, false},
-						      {user_dir, UserDir}]),
+                                                      {user, "foo"},
+                                                      {password, "morot"},
+                                                      {user_interaction, false},
+                                                      {user_dir, UserDir}]),
 
+    {ConnectionRef, Pid}.
+
+start_subsystem_on_closed_channel(Config) ->
+    {ConnectionRef, Pid} = start_server_and_connect_client(Config),
 
     {ok, ChannelId1} = ssh_connection:session_channel(ConnectionRef, infinity),
     ok = ssh_connection:close(ConnectionRef, ChannelId1),
@@ -1859,6 +1891,83 @@ start_subsystem_on_closed_channel(Config) ->
     {error, closed} = ssh_connection:subsystem(ConnectionRef, ChannelId2, "echo_n", 5000),
     {error, closed} = ssh_connection:exec(ConnectionRef, ChannelId2, "testing1.\n", 5000),
     {error, closed} = ssh_connection:send(ConnectionRef, ChannelId2, "exit().\n", 5000),
+
+    ssh:close(ConnectionRef),
+    ssh:stop_daemon(Pid).
+
+start_server_connect_client_and_get_channel(Config) ->
+    start_server_connect_client_and_get_channel(Config, []).
+start_server_connect_client_and_get_channel(Config, DaemonOpts) ->
+    {ConnectionRef, Pid} = start_server_and_connect_client(Config, DaemonOpts),
+    {ok, ChannelId} = ssh_connection:session_channel(ConnectionRef, infinity),
+    {ConnectionRef, ChannelId, Pid}.
+
+start_subsystem_on_channel_with_subsystem(Config) ->
+    {ConnectionRef, ChannelId, Pid} = start_server_connect_client_and_get_channel(Config),
+    success = ssh_connection:subsystem(ConnectionRef, ChannelId, "echo_n", 5000),
+    check_subsystem_start_failure(ConnectionRef, ChannelId, Pid).
+
+start_subsystem_on_channel_with_pty_req(Config) ->
+    DaemonOpts = [{shell, fun(_U, _P) -> spawn(fun() -> timer:sleep(infinity) end) end}],
+    {ConnectionRef, ChannelId, Pid} = start_server_connect_client_and_get_channel(Config, DaemonOpts),
+    success = ssh_connection:ptty_alloc(ConnectionRef, ChannelId, []),
+    check_subsystem_replaces_cli_handler(ConnectionRef, ChannelId, Pid),
+    check_subsystem_start_failure(ConnectionRef, ChannelId, Pid).
+
+start_subsystem_on_channel_with_shell(Config) ->
+    DaemonOpts = [{shell, fun(_U, _P) -> spawn(fun() -> timer:sleep(infinity) end) end}],
+    {ConnectionRef, ChannelId, Pid} = start_server_connect_client_and_get_channel(Config, DaemonOpts),
+    ok = ssh_connection:shell(ConnectionRef, ChannelId),
+    check_subsystem_start_failure(ConnectionRef, ChannelId, Pid).
+
+start_subsystem_on_channel_with_exec(Config) ->
+    Parent = self(),
+    Ref = make_ref(),
+    Fun =
+        fun(Cmd) ->
+                spawn(fun() ->
+                              %% Keep subsystem alive until parent says it's ok
+                              %% otherwise the channel could be closed before we tried to start "echo_n"
+                              Parent ! {self(), Ref},
+                              io:format("echo ~s\n", [Cmd]),
+                              receive {Parent, Ref} -> ok end
+                      end)
+        end,
+    DaemonOpts = [{exec, Fun}],
+    {ConnectionRef, ChannelId, Pid} = start_server_connect_client_and_get_channel(Config, DaemonOpts),
+    success = ssh_connection:exec(ConnectionRef, ChannelId, "testing1.\n", 5000),
+    receive
+        {ExecPid, Ref} ->
+            failure = ssh_connection:subsystem(ConnectionRef, ChannelId, "echo_n", 5000),
+            ExecPid ! {self(), Ref},
+            ssh:close(ConnectionRef),
+            ssh:stop_daemon(Pid)
+    end.
+
+start_subsystem_on_channel_with_env(Config) ->
+    DaemonOpts = [{shell, fun(_U, _P) -> spawn(fun() -> timer:sleep(infinity) end) end}],
+    {ConnectionRef, ChannelId, Pid} = start_server_connect_client_and_get_channel(Config, DaemonOpts),
+    %% setenv is not implemented, and will return a failure, but cli handler will be started anyway
+    failure = ssh_connection:setenv(ConnectionRef, ChannelId, "ENV_TEST", "VALUE", infinity),
+    check_subsystem_replaces_cli_handler(ConnectionRef, ChannelId, Pid),
+    check_subsystem_start_failure(ConnectionRef, ChannelId, Pid).
+
+check_subsystem_replaces_cli_handler(ConnectionRef, ChannelId, DaemonPid) ->
+    Children0 = supervisor:which_children(DaemonPid),
+    {value, {_, ConnectionSup, supervisor, _}} = lists:keysearch([ssh_connection_sup], 4, Children0),
+    Children1 = supervisor:which_children(ConnectionSup),
+    {value, {_, ChannelSup, supervisor, _}} = lists:keysearch([ssh_channel_sup], 4, Children1),
+    [{_, Pid, worker, [ssh_server_channel]}] = supervisor:which_children(ChannelSup),
+    %% Starting subsystem should replace old cli_handler
+    MRef = erlang:monitor(process, Pid),
+    success = ssh_connection:subsystem(ConnectionRef, ChannelId, "echo_n", 5000),
+    receive
+        {'DOWN', MRef, process, Pid, normal} ->
+            ok
+    end.
+
+check_subsystem_start_failure(ConnectionRef, ChannelId, Pid) ->
+    failure = ssh_connection:subsystem(ConnectionRef, ChannelId, "echo_n", 5000),
 
     ssh:close(ConnectionRef),
     ssh:stop_daemon(Pid).
@@ -1882,19 +1991,22 @@ max_channels_option(Config) when is_list(Config) ->
 						      {user_interaction, true},
 						      {user_dir, UserDir}]),
 
-    %% Allocate a number of ChannelId:s to play with. (This operation is not
-    %% counted by the max_channel option).
+    %% Allocate a number of ChannelId:s to play with.
     {ok, ChannelId0} = ssh_connection:session_channel(ConnectionRef, infinity),
     {ok, ChannelId1} = ssh_connection:session_channel(ConnectionRef, infinity),
     {ok, ChannelId2} = ssh_connection:session_channel(ConnectionRef, infinity),
-    {ok, ChannelId3} = ssh_connection:session_channel(ConnectionRef, infinity),
-    {ok, ChannelId4} = ssh_connection:session_channel(ConnectionRef, infinity),
-    {ok, ChannelId5} = ssh_connection:session_channel(ConnectionRef, infinity),
-    {ok, ChannelId6} = ssh_connection:session_channel(ConnectionRef, infinity),
-    {ok, _ChannelId7} = ssh_connection:session_channel(ConnectionRef, infinity),
+    {open_error, ?SSH_OPEN_CONNECT_FAILED, "Connection refused", <<"en">>} =
+        ssh_connection:session_channel(ConnectionRef, infinity),
+    {open_error, ?SSH_OPEN_CONNECT_FAILED, "Connection refused", <<"en">>} =
+        ssh_connection:session_channel(ConnectionRef, infinity),
+    {open_error, ?SSH_OPEN_CONNECT_FAILED, "Connection refused", <<"en">>} =
+        ssh_connection:session_channel(ConnectionRef, infinity),
+    {open_error, ?SSH_OPEN_CONNECT_FAILED, "Connection refused", <<"en">>} =
+        ssh_connection:session_channel(ConnectionRef, infinity),
+    {open_error, ?SSH_OPEN_CONNECT_FAILED, "Connection refused", <<"en">>} =
+        ssh_connection:session_channel(ConnectionRef, infinity),
 
-    %% Now start to open the channels (this is counted my max_channels) to check that
-    %% it gives a failure at right place
+    %% Now start subsystems in open channels.
 
     %%%---- Channel 1(3): shell
     ok = ssh_connection:shell(ConnectionRef,ChannelId0),
@@ -1916,16 +2028,29 @@ max_channels_option(Config) when is_list(Config) ->
     after 5000 ->
 	    ct:fail("Exec #1 Timeout")
     end,
+    %%%---- wait for exec to terminate
+    receive
+        {ssh_cm,ConnectionRef,{closed,ChannelId2}} -> ok
+    after 5000 ->
+            ct:log("Timeout waiting for '{ssh_cm,~p,{closed,~p}}'~n"
+                   "Message queue:~n~p",
+                   [ConnectionRef,ChannelId2,erlang:process_info(self(),messages)]),
+            ct:fail("exit Timeout",[])
+    end,
+
+    %% Now ChannelId2 should be closed now, we can open ChannelId3
+    {ok, ChannelId3} = ssh_connection:session_channel(ConnectionRef, infinity),
 
     %%%---- Channel 3(3): subsystem "echo_n" (Note that ChannelId2 should be closed now)
     ?wait_match(success, ssh_connection:subsystem(ConnectionRef, ChannelId3, "echo_n", infinity)),
 
-    %%%---- Channel 4(3) !: exec  This should fail
-    failure = ssh_connection:exec(ConnectionRef, ChannelId4, "testing2.\n", infinity),
+    %%%---- Channel 4(3) !: creating channel should fail
+    {open_error, ?SSH_OPEN_CONNECT_FAILED, "Connection refused", <<"en">>} =
+        ssh_connection:session_channel(ConnectionRef, infinity),
 
     %%%---- close the shell (Frees one channel)
     ok = ssh_connection:send(ConnectionRef, ChannelId0, "exit().\n", 5000),
-    
+
     %%%---- wait for the subsystem to terminate
     receive
 	{ssh_cm,ConnectionRef,{closed,ChannelId0}} -> ok
@@ -1936,15 +2061,134 @@ max_channels_option(Config) when is_list(Config) ->
 	    ct:fail("exit Timeout",[])
     end,
 
+    %%%---- Channel 3(3) !: exec  This should succeed
+    {ok, ChannelId4} = ssh_connection:session_channel(ConnectionRef, infinity),
+    success = ssh_connection:exec(ConnectionRef, ChannelId4, "testing2.\n", infinity),
+    %%%---- wait for exec to terminate
+    receive
+        {ssh_cm,ConnectionRef,{closed,ChannelId4}} -> ok
+    after 5000 ->
+            ct:log("Timeout waiting for '{ssh_cm,~p,{closed,~p}}'~n"
+                   "Message queue:~n~p",
+                   [ConnectionRef,ChannelId4,erlang:process_info(self(),messages)]),
+            ct:fail("exit Timeout",[])
+    end,
+
     %%---- Try that we can open one channel instead of the closed one
+    {ok, ChannelId5} = ssh_connection:session_channel(ConnectionRef, infinity),
     ?wait_match(success, ssh_connection:subsystem(ConnectionRef, ChannelId5, "echo_n", infinity)),
 
     %%---- But not a fourth one...
-    failure = ssh_connection:subsystem(ConnectionRef, ChannelId6, "echo_n", infinity),
+    {open_error, ?SSH_OPEN_CONNECT_FAILED, "Connection refused", <<"en">>} =
+        ssh_connection:session_channel(ConnectionRef, infinity),
 
     ssh:close(ConnectionRef),
     ssh:stop_daemon(Pid).
 
+%%--------------------------------------------------------------------
+max_channels_to_server(Config) when is_list(Config) ->
+    max_channels_forwarding_helper(Config, true).
+
+%%--------------------------------------------------------------------
+max_channels_from_server(Config) when is_list(Config) ->
+    max_channels_forwarding_helper(Config, false).
+
+max_channels_forwarding_helper(Config, ToServer) ->
+    PrivDir = proplists:get_value(priv_dir, Config),
+    UserDir = filename:join(PrivDir, nopubkey),
+    file:make_dir(UserDir),
+    SysDir = proplists:get_value(data_dir, Config),
+
+    {ok, TargetSock} = gen_tcp:listen(0, [{active, false}, binary, {reuseaddr, true}]),
+    {ok, {TargetHost, TargetPort}} = inet:sockname(TargetSock),
+
+    Options =
+        case ToServer of
+            true ->
+                [{tcpip_tunnel_in, true}];
+            false ->
+                [{tcpip_tunnel_out, true}]
+        end,
+
+    {Pid, Host, Port} = ssh_test_lib:daemon([{system_dir, SysDir},
+                                             {user_dir, UserDir},
+                                             {password, "morot"},
+                                             {max_channels, 2}] ++
+                                                Options),
+
+    Ref = make_ref(),
+    Parent = self(),
+    ConnectionRef = ssh_test_lib:connect(Host, Port,
+                                         [{silently_accept_hosts, true},
+                                          {user, "foo"},
+                                          {password, "morot"},
+                                          {user_interaction, false},
+                                          {user_dir, UserDir},
+                                          {disconnectfun, fun(Reason) -> Parent ! {Ref, Reason} end}]),
+
+    {ok, ListenPort} =
+        case ToServer of
+            true ->
+                ssh:tcpip_tunnel_to_server(ConnectionRef,
+                                           {127,0,0,1},
+                                           0,
+                                           TargetHost,
+                                           TargetPort,
+                                           timer:seconds(5));
+            false ->
+                ssh:tcpip_tunnel_from_server(ConnectionRef,
+                                             {127,0,0,1},
+                                             0,
+                                             TargetHost,
+                                             TargetPort,
+                                             timer:seconds(5))
+        end,
+
+    {ok, Sock1} = gen_tcp:connect("127.0.0.1", ListenPort, [{active, false}]),
+    {ok, Sock2} = gen_tcp:connect("127.0.0.1", ListenPort, [{active, false}]),
+    {ok, _} = gen_tcp:accept(TargetSock),
+    {ok, _} = gen_tcp:accept(TargetSock),
+
+    %% Sockets are connected
+    {error, timeout} = gen_tcp:recv(Sock1, 0, 0),
+    {error, timeout} = gen_tcp:recv(Sock2, 0, 0),
+
+    %% Excess channel refused; connection and existing sockets survive.
+    {ok, Sock3} = gen_tcp:connect("127.0.0.1", ListenPort, [{active, false}]),
+    {error, closed} = gen_tcp:recv(Sock3, 0, timer:seconds(5)),
+
+    %% Prior forwarded sockets are still connected
+    {error, timeout} = gen_tcp:recv(Sock1, 0, 0),
+    {error, timeout} = gen_tcp:recv(Sock2, 0, 0),
+
+    %% Free a slot and confirm the connection is still usable. The
+    %% session_channel round-trip also flushes the handler mailbox, so a
+    %% disconnect (if any) is delivered before the peek below.
+    gen_tcp:close(Sock1),
+    WaitForChannels =
+        fun Wait(0) -> ct:fail("channel slot not freed");
+            Wait(N) ->
+                case ssh:connection_info(ConnectionRef, channels) of
+                    {channels, Chs} when length(Chs) < 2 -> ok;
+                    _ -> timer:sleep(100), Wait(N - 1)
+                end
+        end,
+    WaitForChannels(50),
+    {ok, ChannelId} = ssh_connection:session_channel(ConnectionRef, timer:seconds(5)),
+    ssh_connection:close(ConnectionRef, ChannelId),
+
+    %% Must not have disconnected.
+    receive
+        {Ref, Reason} ->
+            ct:fail("Connection should stay up, got disconnect: ~p", [Reason])
+    after 0 ->
+            ok
+    end,
+
+    gen_tcp:close(TargetSock),
+    ssh:stop_daemon(Pid).
+
+%%--------------------------------------------------------------------
 handler_down_before_open(Config) ->
     %% Start echo subsystem with a delay in init() - until a signal is received
     %% One client opens a channel on the connection

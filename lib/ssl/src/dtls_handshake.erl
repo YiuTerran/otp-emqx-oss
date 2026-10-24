@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2013-2024. All Rights Reserved.
+%% Copyright Ericsson AB 2013-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -195,7 +195,7 @@ handle_client_hello(Version,
 	    {Type, #session{cipher_suite = CipherSuite,
                             own_certificates = [OwnCert |_]} = Session1}
 		= ssl_handshake:select_session(SugesstedId, CipherSuites,
-                                               AvailableHashSigns,
+                                               AvailableHashSigns, HelloExt,
 					       SessIdTracker, Session0#session{ecc = ECCCurve},
                                                TLSVersion, SslOpts, CertKeyPairs),
 	    case CipherSuite of
@@ -316,23 +316,33 @@ address_to_bin({A,B,C,D,E,F,G,H}, Port) ->
     <<A:16,B:16,C:16,D:16,E:16,F:16,G:16,H:16,Port:16>>.
 
 %%--------------------------------------------------------------------
-
 handle_fragments(Version, FragmentData, Buffers0, Options, Acc) ->
-    Fragments = decode_handshake_fragments(FragmentData),
-    do_handle_fragments(Version, Fragments, Buffers0, Options, Acc).
+    try decode_handshake_fragments(FragmentData) of
+        Fragments ->
+            do_handle_fragments(Version, Fragments, Buffers0, Options, Acc)
+    catch
+        error:_Reason ->
+            throw(?ALERT_REC(?FATAL, ?DECODE_ERROR, malformed_handshake_fragment))
+    end.
 
 do_handle_fragments(_, [], Buffers, _Options, Acc) ->
     {lists:reverse(Acc), Buffers};
-do_handle_fragments(Version, [Fragment | Fragments], Buffers0, #{log_level := LogLevel} = Options, Acc) ->
-    case reassemble(Version, Fragment, Buffers0) of
-	{more_data, Buffers} when Fragments == [] ->
-	    {lists:reverse(Acc), Buffers};
-	{more_data, Buffers} ->
-	    do_handle_fragments(Version, Fragments, Buffers, Options, Acc);
-	{{Handshake, _} = HsPacket, Buffers} ->
+do_handle_fragments(Version, [Fragment | Fragments], Buffers0,
+                    #{log_level := LogLevel} = Options, Acc) ->
+    try reassemble(Version, Fragment, Buffers0) of
+        {more_data, Buffers} when Fragments == [] ->
+            {lists:reverse(Acc), Buffers};
+        {more_data, Buffers} ->
+            do_handle_fragments(Version, Fragments, Buffers, Options, Acc);
+        {{Handshake, _} = HsPacket, Buffers} ->
             ssl_logger:debug(LogLevel, inbound, 'handshake', Handshake),
-	    do_handle_fragments(Version, Fragments, Buffers, Options, [HsPacket | Acc])
+            do_handle_fragments(Version, Fragments, Buffers, Options, [HsPacket | Acc])
+    catch
+        error:Reason:ST ->
+            ?SSL_LOG(debug, reassemble_fragment_error, [{reason, Reason}, {stacktrace, ST}]),
+            throw(?ALERT_REC(?FATAL, ?DECODE_ERROR, malformed_handshake_fragment))
     end.
+
 
 decode_handshake(Version, <<?BYTE(Type), Bin/binary>>) ->
     decode_handshake(Version, Type, Bin).
@@ -340,17 +350,27 @@ decode_handshake(Version, <<?BYTE(Type), Bin/binary>>) ->
 decode_handshake(_, ?HELLO_REQUEST, <<>>) ->
     #hello_request{};
 decode_handshake(Version, ?CLIENT_HELLO, <<?UINT24(_), ?UINT16(_),
-					    ?UINT24(_),  ?UINT24(_), 
+                                           ?UINT24(_),  ?UINT24(_),
 					    ?BYTE(Major), ?BYTE(Minor), Random:32/binary,
 					    ?BYTE(SID_length), Session_ID:SID_length/binary,
 					    ?BYTE(CookieLength), Cookie:CookieLength/binary,
 					    ?UINT16(Cs_length), CipherSuites:Cs_length/binary,
                                             ?BYTE(Cm_length), _CompMethods:Cm_length/binary,
 					    Extensions/binary>>) ->
-    TLSVersion = dtls_v1:corresponding_tls_version(Version),
-    LegacyVersion = dtls_v1:corresponding_tls_version({Major, Minor}),
+    TLSHelloVersion = dtls_v1:corresponding_tls_version({Major, Minor}),
+    TLSVersion = case TLSHelloVersion of
+                     ?TLS_1_2 ->
+                         %% Decode as TLS-1.2 so that signature_algorithms
+                         %% schemes are handled correctly. DTLS-1.3 is not
+                         %% supported yet, but also DTLS-1.2 can support
+                         %% rsa_pss_rsae schemes.
+                         TLSHelloVersion;
+                     _ ->
+                        dtls_v1:corresponding_tls_version(Version) %% Legacy way
+                 end,
     Exts = ssl_handshake:decode_vector(Extensions),
-    DecodedExtensions = ssl_handshake:decode_hello_extensions(Exts, TLSVersion, LegacyVersion, client),
+    DecodedExtensions = ssl_handshake:decode_hello_extensions(Exts, TLSHelloVersion,
+                                                              TLSVersion, client_hello),
 
     #client_hello{
        client_version = {Major,Minor},
@@ -377,7 +397,7 @@ decode_tls_handshake(Version, Tag, Msg) ->
     ssl_handshake:decode_handshake(TLSVersion, Tag, Msg).
 
 decode_handshake_fragments(<<>>) ->
-    [<<>>];
+    [];
 decode_handshake_fragments(<<?BYTE(Type), ?UINT24(Length),
 			     ?UINT16(MessageSeq),
 			     ?UINT24(FragmentOffset), ?UINT24(FragmentLength),

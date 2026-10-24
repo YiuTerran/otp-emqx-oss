@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1996-2024. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -1266,7 +1266,7 @@ s_write(Val) when is_tuple(Val), tuple_size(Val) > 2 ->
 Write `Record` to table `Tab`.
 
 The function returns `ok`, or terminates if an error occurs. For example, the
-transaction terminates if no `person` table exists.
+transaction terminates if no `Tab` table exists.
 
 The semantics of this function is context-sensitive. For details, see
 `mnesia:activity/4`. In transaction-context, it acquires a lock of type
@@ -4143,7 +4143,7 @@ If the database is huge, it it not always possible to restore it online. In such
 cases, restore the old database by installing a fallback and then restart.
 """.
 -spec restore(Src::_, [Arg]) -> t_result([table()]) when
-      Op  :: 'skip_tables' | 'clear_tables' | 'keep_tables' | 'restore_tables',
+      Op  :: 'skip_tables' | 'clear_tables' | 'keep_tables' | 'recreate_tables',
       Arg :: {'module', module()} | {Op, [table()]} | {'default_op', Op}.
 restore(Opaque, Args) ->
     mnesia_schema:restore(Opaque, Args).

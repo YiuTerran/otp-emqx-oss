@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1996-2025. All Rights Reserved.
+ * Copyright Ericsson AB 1996-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -1026,6 +1026,11 @@ void erts_print_base64(fmtfn_t to, void *to_arg, const byte* src, Uint size);
 int erts_set_signal(Eterm signal, Eterm type);
 
 /* erl_arith.c */
+
+/* The number of bignum words that we assume can be processed in one
+ * reduction. */
+#define ERTS_ARITH_WORDS_PER_REDUCTION 16
+
 double erts_get_positive_zero_float(void);
 
 /* config.c */

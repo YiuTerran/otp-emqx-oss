@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2021-2024. All Rights Reserved.
+ * Copyright Ericsson AB 2021-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -84,6 +84,8 @@ protected:
 
     BeamAssemblerCommon(BaseAssembler &assembler);
     ~BeamAssemblerCommon();
+
+    void lateInit();
 
     void codegen(JitAllocator *allocator,
                  const void **executable_ptr,
@@ -654,7 +656,8 @@ Eterm beam_jit_build_argument_list(Process *c_p, const Eterm *regs, int arity);
 Export *beam_jit_handle_unloaded_fun(Process *c_p,
                                      Eterm *reg,
                                      int arity,
-                                     Eterm fun_thing);
+                                     Eterm fun_thing,
+                                     ErtsCodeIndex code_ix);
 
 bool beam_jit_is_list_of_immediates(Eterm term);
 bool beam_jit_is_shallow_boxed(Eterm term);

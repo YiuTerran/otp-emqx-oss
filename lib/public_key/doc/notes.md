@@ -19,6 +19,85 @@ limitations under the License.
 -->
 # Public_Key Release Notes
 
+## Public_Key 1.17.1.7
+
+### Fixed Bugs and Malfunctions
+
+- Enforce the RFC 5280 basic-constraints CA checks for X.509 version 1 and version 2 certificates during certificate path validation. A v1/v2 certificate carries no extensions and therefore no
+  basicConstraints, so it must never be accepted as a CA; such a certificate is now rejected in issuer position with {bad_cert, missing_basic_constraint} while remaining valid as a leaf. This closes the version-1 path left uncovered by the earlier CVE-2026-42789 fix.
+
+  Own Id: OTP-20423 Aux Id: [PR-11727], [CVE-2026-42789]
+
+[PR-11727]: https://github.com/erlang/otp/pull/11727
+[CVE-2026-42789]: https://nvd.nist.gov/vuln/detail/2026-42789
+
+## Public_Key 1.17.1.6
+
+### Fixed Bugs and Malfunctions
+
+- Align moduli and pubkey_moduli.hrl to state on OTP-28 and newer.
+
+  Own Id: OTP-20367 Aux Id: [PR-11574]
+
+[PR-11574]: https://github.com/erlang/otp/pull/11574
+
+## Public_Key 1.17.1.5
+
+### Fixed Bugs and Malfunctions
+
+- A certificate chain with crafted policyMappings extensions could cause exponential memory consumption during path validation, exploitable via TLS handshake. Chains exceeding a node-count cap are now rejected with {bad_cert, policy_tree_exceeded}.
+
+  Own Id: OTP-20251 Aux Id: [PR-11372], GHSA-622p-qfh6-c352
+
+[PR-11372]: https://github.com/erlang/otp/pull/11372
+
+## Public_Key 1.17.1.4
+
+### Fixed Bugs and Malfunctions
+
+- Hardened OCSP response verification by using constant-time hash comparisons and rejecting responses exceeding 100 KB before ASN.1 decoding.
+
+  Own Id: OTP-20197 Aux Id: [PR-11239]
+
+[PR-11239]: https://github.com/erlang/otp/pull/11239
+
+## Public_Key 1.17.1.3
+
+### Fixed Bugs and Malfunctions
+
+- OCSP responder certificates are now checked for expiration before being accepted as authorized responders. Previously, expired or not-yet-valid responder certificates were incorrectly accepted when verifying OCSP responses.
+
+  Own Id: OTP-20112 Aux Id: [PR-11136]
+
+- Corrected basic constraint path validation check in accordance to RFC 5280.
+
+  Own Id: OTP-20129 Aux Id: [CVE-2026-42789], [PR-11123]
+
+- 'public_key', Adhere to RFC 9525, and remove support for legacy fallback to check hostname against subject common name. Also improve error handling creating two separate errors for name constraint check for subject names and subject alternative names.
+  
+  'ssl'. Error handling is slightly changed to better reflect public_key behaviour.
+
+  *** POTENTIAL INCOMPATIBILITY ***
+
+  Own Id: OTP-20130 Aux Id: [CVE-2026-42790], [PR-11124]
+
+[PR-11136]: https://github.com/erlang/otp/pull/11136
+[CVE-2026-42789]: https://nvd.nist.gov/vuln/detail/2026-42789
+[PR-11123]: https://github.com/erlang/otp/pull/11123
+[CVE-2026-42790]: https://nvd.nist.gov/vuln/detail/2026-42790
+[PR-11124]: https://github.com/erlang/otp/pull/11124
+
+## Public_Key 1.17.1.2
+
+### Fixed Bugs and Malfunctions
+
+- OCSP designated responder certificate verification now checks the CA's cryptographic signature on the responder certificate. Previously, only the issuer DN match and id-kp-OCSPSigning EKU were verified, which meant a forged self-signed certificate with the CA's subject DN would be accepted as a valid designated responder (Case 2 in RFC 6960 §4.2.2.2).
+
+  Own Id: OTP-20042 Aux Id: [CVE-2026-32144], [PR-10873]
+
+[CVE-2026-32144]: https://nvd.nist.gov/vuln/detail/2026-32144
+[PR-10873]: https://github.com/erlang/otp/pull/10873
+
 ## Public_Key 1.17.1.1
 
 ### Fixed Bugs and Malfunctions

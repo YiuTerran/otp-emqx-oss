@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1996-2024. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -904,12 +904,12 @@ vcore_elem({_Item, Info}) ->
     show("~tp~n", [Info]).
 
 fix_error(X) ->
-    set(last_error, X), %% for debugabililty
+    set(last_error, X), %% for debugging
     case X of
 	{aborted, Reason} -> Reason;
 	{abort, Reason} -> Reason;
 	Y when is_atom(Y) -> Y;
-	{'EXIT', {_Reason, {Mod, _, _}}} when is_atom(Mod) ->
+	{_Reason, [{Mod, _, _}|_]} when is_atom(Mod) ->
 	    save(X),
 	    case atom_to_list(Mod) of
 		[$m, $n, $e|_] -> badarg;

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2018-2024. All Rights Reserved.
+%% Copyright Ericsson AB 2018-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@
 
 -module(beam_ssa_type).
 -moduledoc false.
--export([opt_start/2, opt_continue/4, opt_finish/3, opt_ranges/1]).
+-export([opt_start/3, opt_continue/4, opt_finish/3, opt_ranges/1]).
 
 -include("beam_ssa_opt.hrl").
 -include("beam_types.hrl").
@@ -76,12 +76,12 @@
 
 %%
 
--spec opt_start(term(), term()) -> term().
-opt_start(StMap, FuncDb0) when FuncDb0 =/= #{} ->
-    {ArgDb, MetaCache, FuncDb} = signatures(StMap, FuncDb0),
+-spec opt_start(term(), term(), boolean()) -> term().
+opt_start(StMap, FuncDb0, Deterministic) when FuncDb0 =/= #{} ->
+    {ArgDb, MetaCache, FuncDb} = signatures(StMap, FuncDb0, Deterministic),
 
     opt_start_1(maps:keys(StMap), ArgDb, StMap, FuncDb, MetaCache);
-opt_start(StMap, FuncDb) ->
+opt_start(StMap, FuncDb, _Deterministic) ->
     %% Module-level analysis is disabled, likely because of a call to
     %% load_nif/2 or similar. opt_continue/4 will assume that all arguments and
     %% return types are 'any'.
@@ -137,8 +137,8 @@ opt_start_1([], _CommittedArgs, StMap, FuncDb, _MetaCache) ->
           updates = #{} :: #{ func_id() => [type()] },
           meta_cache = #{} :: meta_cache()}).
 
-signatures(StMap, FuncDb0) ->
-    State0 = init_sig_st(StMap, FuncDb0),
+signatures(StMap, FuncDb0, Deterministic) ->
+    State0 = init_sig_st(StMap, FuncDb0, Deterministic),
     {State, FuncDb} = signatures_1(StMap, FuncDb0, State0),
     {State#sig_st.committed, State#sig_st.meta_cache, FuncDb}.
 
@@ -198,7 +198,7 @@ do_sig_function(Id, StMap, State0, FuncDb0) ->
             {State#sig_st{wl=Wl}, FuncDb}
     end.
 
-sig_function_1(Id, StMap, State0, FuncDb) ->
+sig_function_1(Id, StMap, State0, FuncDb0) ->
     #opt_st{ssa=Linear,args=Args} = map_get(Id, StMap),
 
     {ArgTypes, State1} = sig_commit_args(Id, State0),
@@ -218,7 +218,8 @@ sig_function_1(Id, StMap, State0, FuncDb) ->
 
     Wl0 = State1#sig_st.wl,
 
-    {State, SuccTypes} = sig_bs(Linear, Ds, Ls, FuncDb, #{}, [], Meta, State2),
+    {State, SuccTypes, FuncDb} =
+        sig_bs(Linear, Id, Ds, Ls, FuncDb0, #{}, [], Meta, State2),
 
     WlChanged = wl_changed(Wl0, State#sig_st.wl),
     #{ Id := #func_info{succ_types=SuccTypes0}=Entry0 } = FuncDb,
@@ -243,13 +244,13 @@ sig_init_metadata(Id, Linear, Args, #sig_st{meta_cache=MetaCache} = State) ->
     end.
 
 sig_bs([{L, #b_blk{is=Is,last=Last0}} | Bs],
-       Ds0, Ls0, Fdb, Sub0, SuccTypes0, Meta, State0) ->
+       Id, Ds0, Ls0, Fdb0, Sub0, SuccTypes0, Meta, State0) ->
     case Ls0 of
         #{ L := Incoming } ->
             {incoming, Ts0} = Incoming,         %Assertion.
 
-            {Ts, Ds, Sub, State} =
-                sig_is(Is, Ts0, Ds0, Ls0, Fdb, Sub0, State0),
+            {Ts, Ds, Fdb, Sub, State} =
+                sig_is(Is, Id, Ts0, Ds0, Ls0, Fdb0, Sub0, State0),
 
             Last = simplify_terminator(Last0, Ts, Ds, Sub),
             SuccTypes = update_success_types(Last, Ts, Ds, Meta, SuccTypes0),
@@ -262,18 +263,18 @@ sig_bs([{L, #b_blk{is=Is,last=Last0}} | Bs],
             %% nodes, but there's nothing to gain from that at the moment so
             %% we'll store the current Ts to save memory.
             Ls = Ls1#{ L := {outgoing, Ts} },
-            sig_bs(Bs, Ds, Ls, Fdb, Sub, SuccTypes, Meta, State);
+            sig_bs(Bs, Id, Ds, Ls, Fdb, Sub, SuccTypes, Meta, State);
         #{} ->
             %% This block is never reached. Ignore it.
-            sig_bs(Bs, Ds0, Ls0, Fdb, Sub0, SuccTypes0, Meta, State0)
+            sig_bs(Bs, Id, Ds0, Ls0, Fdb0, Sub0, SuccTypes0, Meta, State0)
     end;
-sig_bs([], _Ds, _Ls, _Fdb, _Sub, SuccTypes, _Meta, State) ->
-    {State, SuccTypes}.
+sig_bs([], _Id, _Ds, _Ls, Fdb, _Sub, SuccTypes, _Meta, State) ->
+    {State, SuccTypes, Fdb}.
 
 sig_is([#b_set{op=call,
                args=[#b_local{}=Callee | _]=Args0,
                dst=Dst}=I0 | Is],
-       Ts0, Ds0, Ls, Fdb, Sub, State0) ->
+       Id, Ts0, Ds0, Ls, Fdb, Sub, State0) ->
     Args = simplify_args(Args0, Ts0, Sub),
     I1 = I0#b_set{args=Args},
 
@@ -282,21 +283,21 @@ sig_is([#b_set{op=call,
 
     Ts = update_types(I, Ts0, Ds0),
     Ds = Ds0#{ Dst => I },
-    sig_is(Is, Ts, Ds, Ls, Fdb, Sub, State);
+    sig_is(Is, Id, Ts, Ds, Ls, Fdb, Sub, State);
 sig_is([#b_set{op=call,
                args=[#b_var{} | _]=Args0,
                dst=Dst}=I0 | Is],
-       Ts0, Ds0, Ls, Fdb, Sub, State0) ->
+       Id, Ts0, Ds0, Ls, Fdb0, Sub, State0) ->
     Args = simplify_args(Args0, Ts0, Sub),
     I1 = I0#b_set{args=Args},
 
-    {I, State} = sig_fun_call(I1, Args, Ts0, Ds0, Fdb, Sub, State0),
+    {I, State, Fdb} = sig_fun_call(Id, I1, Args, Ts0, Ds0, Fdb0, Sub, State0),
 
     Ts = update_types(I, Ts0, Ds0),
     Ds = Ds0#{ Dst => I },
-    sig_is(Is, Ts, Ds, Ls, Fdb, Sub, State);
+    sig_is(Is, Id, Ts, Ds, Ls, Fdb, Sub, State);
 sig_is([#b_set{op=make_fun,args=Args0,dst=Dst}=I0|Is],
-       Ts0, Ds0, Ls, Fdb, Sub0, State0) ->
+       Id, Ts0, Ds0, Ls, Fdb, Sub0, State0) ->
     Args = simplify_args(Args0, Ts0, Sub0),
     I1 = I0#b_set{args=Args},
 
@@ -304,18 +305,18 @@ sig_is([#b_set{op=make_fun,args=Args0,dst=Dst}=I0|Is],
 
     Ts = update_types(I, Ts0, Ds0),
     Ds = Ds0#{ Dst => I },
-    sig_is(Is, Ts, Ds, Ls, Fdb, Sub0, State);
-sig_is([I0 | Is], Ts0, Ds0, Ls, Fdb, Sub0, State) ->
+    sig_is(Is, Id, Ts, Ds, Ls, Fdb, Sub0, State);
+sig_is([I0 | Is], Id, Ts0, Ds0, Ls, Fdb, Sub0, State) ->
     case simplify(I0, Ts0, Ds0, Ls, Sub0) of
         {#b_set{}, Ts, Ds} ->
-            sig_is(Is, Ts, Ds, Ls, Fdb, Sub0, State);
+            sig_is(Is, Id, Ts, Ds, Ls, Fdb, Sub0, State);
         Sub when is_map(Sub) ->
-            sig_is(Is, Ts0, Ds0, Ls, Fdb, Sub, State)
+            sig_is(Is, Id, Ts0, Ds0, Ls, Fdb, Sub, State)
     end;
-sig_is([], Ts, Ds, _Ls, _Fdb, Sub, State) ->
-    {Ts, Ds, Sub, State}.
+sig_is([], _Id, Ts, Ds, _Ls, Fdb, Sub, State) ->
+    {Ts, Ds, Fdb, Sub, State}.
 
-sig_fun_call(I0, Args, Ts, Ds, Fdb, Sub, State0) ->
+sig_fun_call(Id, I0, Args, Ts, Ds, Fdb0, Sub, State0) ->
     [Fun | CallArgs0] = Args,
     FunType = normalized_type(Fun, Ts),
     Arity = length(CallArgs0),
@@ -327,19 +328,34 @@ sig_fun_call(I0, Args, Ts, Ds, Fdb, Sub, State0) ->
             %% When a fun is used and defined in the same function, we can make
             %% a direct call since the environment is still available.
             CallArgs = CallArgs0 ++ simplify_args(Env, Ts, Sub),
-            I = I0#b_set{args=[Callee | CallArgs]},
-            sig_local_call(I, Callee, CallArgs, Ts, Fdb, State0);
+            I1 = I0#b_set{args=[Callee | CallArgs]},
+            {I, State} = sig_local_call(I1, Callee, CallArgs, Ts, Fdb0, State0),
+            {I, State, Fdb0};
         {#t_fun{arity=Arity,target={Name,Arity}}, _} ->
-            %% When a fun lacks free variables, we can make a direct call even
-            %% when we don't know where it was defined.
+            %% When a fun lacks free variables, we can make a direct
+            %% call even when we don't know where it was defined.
             Callee = #b_local{name=#b_literal{val=Name},
                               arity=Arity},
-            I = I0#b_set{args=[Callee | CallArgs0]},
-            sig_local_call(I, Callee, CallArgs0, Ts, Fdb, State0);
+            I1 = I0#b_set{args=[Callee | CallArgs0]},
+            {I, State} = sig_local_call(I1, Callee, CallArgs0, Ts, Fdb0, State0),
+
+            %% If callee is recursively defined, its type might not be
+            %% fully resolved yet, and therefore the callee will be
+            %% re-analyzed. When that happens, it is essential that
+            %% the current function is also re-analyzed to pick up the
+            %% correct return type of the call. Therefore, the current
+            %% function must be registered as a caller of the callee.
+            CalleeFi0 = map_get(Callee, Fdb0),
+            #func_info{in=In0} = CalleeFi0,
+            In = ordsets:add_element(Id, In0),
+            CalleeFi = CalleeFi0#func_info{in=In},
+            Fdb = Fdb0#{Callee := CalleeFi},
+
+            {I, State, Fdb};
         {#t_fun{type=Type}, _} when Type =/= any ->
-            {beam_ssa:add_anno(result_type, Type, I0), State0};
+            {beam_ssa:add_anno(result_type, Type, I0), State0, Fdb0};
         _ ->
-            {I0, State0}
+            {I0, State0, Fdb0}
     end.
 
 sig_local_call(I0, Callee, Args, Ts, Fdb, State) ->
@@ -367,16 +383,22 @@ sig_local_return(I, Callee, ArgTypes, Fdb) ->
         Type -> beam_ssa:add_anno(result_type, Type, I)
     end.
 
-init_sig_st(StMap, FuncDb) ->
+init_sig_st(StMap, FuncDb, Deterministic) ->
     %% Start out as if all the roots have been called with 'any' for all
     %% arguments.
-    Roots = init_sig_roots(FuncDb),
+    Roots = init_sig_roots(FuncDb, Deterministic),
     #sig_st{ committed=#{},
              updates=init_sig_args(Roots, StMap, #{}),
              wl=wl_defer_list(Roots, wl_new()) }.
 
-init_sig_roots(FuncDb) ->
-    [Id || Id := #func_info{exported=true} <- FuncDb].
+init_sig_roots(FuncDb, Deterministic) ->
+    Iter =
+        if Deterministic ->
+            maps:iterator(FuncDb, ordered);
+        not Deterministic ->
+            FuncDb
+        end,
+    [Id || Id := #func_info{exported=true} <- Iter].
 
 init_sig_args([Root | Roots], StMap, Acc) ->
     #opt_st{args=Args0} = map_get(Root, StMap),
@@ -2045,7 +2067,11 @@ update_successors(#b_ret{}=Last, _Ts, _Ds, Ls, _UsedOnce) ->
 
 update_switch([{Val, Lbl}=Sw | List],
               V, FailType0, Ts, Ds, Ls0, IsTempVar, Acc) ->
-    FailType = beam_types:subtract(FailType0, concrete_type(Val, Ts)),
+    ValType = concrete_type(Val, Ts),
+    FailType = case beam_types:is_singleton_type(ValType) of
+                   true -> beam_types:subtract(FailType0, ValType);
+                   false -> FailType0
+               end,
     case infer_types_switch(V, Val, Ts, IsTempVar, Ds) of
         none ->
             update_switch(List, V, FailType, Ts, Ds, Ls0, IsTempVar, Acc);

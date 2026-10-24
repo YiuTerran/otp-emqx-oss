@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1998-2024. All Rights Reserved.
+%% Copyright Ericsson AB 1998-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -36,19 +36,18 @@
 %%%=========================================================================
 
 -spec start_link() -> {ok, pid()} | ignore | {error, term()}.
-			
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 %%%=========================================================================
 %%%  Supervisor callback
 %%%=========================================================================
-init([]) ->    
-    SupFlags = #{strategy  => one_for_one, 
+init([]) ->
+    SupFlags = #{strategy  => one_for_one,
                  intensity =>   10,
                  period    => 3600
                 },
-    ChildSpecs = [tls_sup_child_spec()], 
+    ChildSpecs = [tls_sup_child_spec()],
     {ok, {SupFlags, ChildSpecs}}.
 
 %%--------------------------------------------------------------------
@@ -58,8 +57,8 @@ init([]) ->
 tls_sup_child_spec() ->
     #{id       => tls_dist_sup,
       start    => {tls_dist_sup, start_link, []},
-      restart  => permanent, 
-      shutdown => 4000,
+      restart  => permanent,
+      shutdown => infinity,
       modules  => [tls_dist_sup],
       type     => supervisor
      }.

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2013-2024. All Rights Reserved.
+%% Copyright Ericsson AB 2013-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -41,7 +41,7 @@
 	 set_renegotiation_flag/2,
 	 set_client_verify_data/3,
 	 set_server_verify_data/3,
-         set_max_fragment_length/2,
+         maybe_set_max_fragment_length/2,
 	 empty_connection_state/1,
 	 empty_connection_state/3,
          record_protocol_role/1,
@@ -212,11 +212,12 @@ set_renegotiation_flag(Flag, #{current_read := CurrentRead,
 		      pending_write => Update(PendingWrite)}.
 
 %%--------------------------------------------------------------------
--spec set_max_fragment_length(term(), connection_states()) -> connection_states().
+-spec maybe_set_max_fragment_length(term(), connection_states()) -> connection_states().
 %%
-%% Description: Set maximum fragment length in all connection states
+%% Description: Set maximum fragment length in all connection states when
+%% it has been negotiated.
 %%--------------------------------------------------------------------
-set_max_fragment_length(#max_frag_enum{enum = MaxFragEnum}, ConnectionStates)
+maybe_set_max_fragment_length(#max_frag_enum{enum = MaxFragEnum}, ConnectionStates)
   when is_integer(MaxFragEnum), 1 =< MaxFragEnum, MaxFragEnum =< 4 ->
     MaxFragmentLength = if MaxFragEnum == 1 -> ?MAX_FRAGMENT_LENGTH_BYTES_1;
                            MaxFragEnum == 2 -> ?MAX_FRAGMENT_LENGTH_BYTES_2;
@@ -224,7 +225,7 @@ set_max_fragment_length(#max_frag_enum{enum = MaxFragEnum}, ConnectionStates)
                            MaxFragEnum == 4 -> ?MAX_FRAGMENT_LENGTH_BYTES_4
                         end,
     ConnectionStates#{max_fragment_length => MaxFragmentLength};
-set_max_fragment_length(_,ConnectionStates) ->
+maybe_set_max_fragment_length(_,ConnectionStates) ->
     ConnectionStates.
 
 %%--------------------------------------------------------------------
@@ -409,7 +410,7 @@ nonce_seed(_,_, CipherState) ->
 %%--------------------------------------------------------------------
 
 empty_connection_state(ConnectionEnd) ->
-    MaxEarlyDataSize = ssl_config:get_max_early_data_size(),
+    MaxEarlyDataSize = 0, %% TLS-1.3 only, this is not called by TLS-1.3
     empty_connection_state(ConnectionEnd, _Version = undefined, MaxEarlyDataSize).
 %%
 empty_connection_state(ConnectionEnd, Version, MaxEarlyDataSize) ->
@@ -441,11 +442,8 @@ make_random(_Version) ->
     Random_28_bytes = ssl_cipher:random_bytes(28),
     <<?UINT32(Secs_since_1970), Random_28_bytes/binary>>.
 
--compile({inline, [is_correct_mac/2]}).
-is_correct_mac(Mac, Mac) ->
-    true;
-is_correct_mac(_M,_H) ->
-    false.
+is_correct_mac(Mac1, Mac2) ->
+    crypto:hash_equals(Mac1, Mac2).
 
 -compile({inline, [record_protocol_role/1]}).
 record_protocol_role(client) ->

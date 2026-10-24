@@ -1,7 +1,7 @@
 <!--
 %CopyrightBegin%
 
-Copyright Ericsson AB 2023. All Rights Reserved.
+Copyright Ericsson AB 2023-2026. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -45,20 +45,19 @@ The following applies to daemons (servers).
 DoS (Denial of Service) attacks are hard to fight at the node level. Here are
 firewalls and other means needed, but that is out of scope for this guide.
 However, some measures could be taken in the configuration of the SSH server to
-increase the resilence. The options to use are:
+increase the resilience. The options to use are:
 
 ### Counters and parallelism
 
 - **[max_sessions](`m:ssh#hardening_daemon_options-max_sessions`)** - The
   maximum number of simultaneous sessions that are accepted at any time for this
-  daemon. This includes sessions that are being authorized. The default is that
-  an unlimited number of simultaneous sessions are allowed. It is a good
-  candidate to set if the capacity of the server is low or a capacity margin is
-  needed.
+  daemon. This includes sessions that are being authenticated. The default is 1024.
+  It is a good candidate to lower if the capacity of the server is low or a capacity
+  margin is needed.
 
 - **[max_channels](`m:ssh#hardening_daemon_options-max_channels`)** - The
   maximum number of channels that are accepted for each connection. The default
-  is unlimited.
+  is 256.
 
 - **[parallel_login](`m:ssh#hardening_daemon_options-parallel_login`)** - If set
   to false (the default value), only one login is handled at a time. If set to
@@ -92,6 +91,26 @@ increase the resilence. The options to use are:
 A figure clarifies when a timeout is started and when it triggers:
 
 ![SSH server timeouts](assets/ssh_timeouts.jpg "SSH server timeouts")
+
+### Resilience to compression-based attacks
+
+SSH supports compression of the data stream.
+
+Reasonable finite [max_sessions](`m:ssh#hardening_daemon_options-max_sessions`)
+option is highly recommended if compression is used to prevent excessive resource
+usage by the compression library.
+See [Counters and parallelism](#counters-and-parallelism).
+
+The `'zlib@openssh.com'` algorithm is recommended because it only activates
+after successful authentication.
+
+The `'zlib'` algorithm is not recommended because it activates before
+authentication completes, allowing unauthenticated clients to expose potential
+vulnerabilities in compression libraries, and increases attack surface of
+compression-based side-channel and traffic-analysis attacks.
+
+In both algorithms decompression is protected by a size limit that prevents
+excessive memory consumption.
 
 ## Verifying the remote daemon (server) in an SSH client
 
@@ -232,6 +251,33 @@ It is possible to replace the string with one randomly generated for each
 connection attempt. See the reference manual for
 [id_string](`t:ssh:id_string_common_option/0`).
 
+## SFTP symlink risks
+
+Symbolic links inside the SFTP root that point outside it can be followed by
+file operations such as `open`, `read`, and `stat`.  The `root` option
+confines path resolution done by the daemon itself, but it does not prevent
+the operating system from following symlinks when the daemon opens the
+resulting path.
+
+Symlinks created by SFTP clients are not exploitable this way: the daemon
+converts the target to an absolute path and clamps it to the configured root
+before writing the link.  However, symlinks that already exist inside the root
+directory, or are created through other access channels (shell access, another
+service, etc.), can point outside the root and will be followed.
+
+Mitigations:
+
+- **Filesystem permissions** - Run the SSH daemon as a dedicated user with
+  minimal privileges.  Ensure that user cannot read or write sensitive files
+  outside the root.
+
+- **Control the root contents** - Ensure no pre-existing symlinks in the root
+  point outside it, and that no other process can create such links.
+
+- **OS-level protections** - On Linux, mount the root directory with the
+  `nosymfollow` mount option, or use filesystem namespaces to prevent
+  symlink traversal outside the root.
+
 ## Client connection options
 
 A client could limit the time for the initial tcp connection establishment with
@@ -241,3 +287,28 @@ is in milliseconds, and the initial value is infinity.
 The negotiation (session setup time) time can be limited with the _parameter_
 `NegotiationTimeout` in a call establishing an ssh session, for example
 `ssh:connect/3`.
+
+## SFTP Security
+
+### Root Directory Isolation
+
+The [`root`](`m:ssh_sftpd`) option restricts SFTP users to a
+specific directory tree, preventing access to files outside that directory.
+
+**Example:**
+
+```erlang
+ssh:daemon(Port, [
+    {subsystems, [ssh_sftpd:subsystem_spec([{root, "/home/sftpuser"}])]},
+    ...
+]).
+```
+
+**Important:** The `root` option is configured per daemon, not per user. All
+users connecting to the same daemon share the same root directory. For per-user
+isolation, consider running separate daemon instances on different ports or
+using OS-level mechanisms (PAM chroot, containers, file permissions).
+
+**Defense-in-depth:** For high-security deployments, combine the `root` option
+with OS-level isolation mechanisms such as chroot jails, containers, or
+mandatory access control (SELinux, AppArmor).

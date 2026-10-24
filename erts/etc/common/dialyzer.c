@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  * 
- * Copyright Ericsson AB 2006-2021. All Rights Reserved.
+ * Copyright Ericsson AB 2006-2026. All Rights Reserved.
  * 
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -536,6 +536,12 @@ possibly_quote(char* arg)
 	default:
 	    continue;
 	}
+    }
+    if (*(s-1) == '"' && arg[0] == '"') {
+        /*
+        * Already quoted, nothing to do.
+        */
+        return arg;
     }
     if (!mustQuote) {
 	return arg;

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2008-2024. All Rights Reserved.
+%% Copyright Ericsson AB 2008-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -306,11 +306,14 @@ The value of the issuer part of a certificate.
 -doc """
 The reason that a certifcate gets rejected by the certificate path validation.
 """.
--type bad_cert_reason()      :: cert_expired | invalid_issuer | invalid_signature | name_not_permitted |
+-type bad_cert_reason()      :: cert_expired | invalid_issuer | invalid_signature |
+                                distinguished_name_not_permitted |
+                                name_not_permitted |
                                 missing_basic_constraint | invalid_key_usage | duplicate_cert_in_path |
                                 {key_usage_mismatch, term()} |
                                 {'policy_requirement_not_met', term()} | {'invalid_policy_mapping', term()} |
                                 {revoked, crl_reason()} | invalid_validity_dates |
+                                policy_tree_exceeded |
                                 {revocation_status_undetermined, term()} | atom().
 
 -doc(#{title => <<"Certificates">>}).
@@ -1647,7 +1650,11 @@ Explanations of reasons for a bad certificate:
 - **invalid_signature** - Certificate was not signed by its issuer certificate
   in the chain.
 
-- **name_not_permitted** - Invalid Subject Alternative Name extension.
+- **distinguished_name_not_permitted** - Subject Name does not adhere to name constraints
+  which is mandatory in RFC 5280.
+
+- **name_not_permitted** - Subject Alternative Name does not adhere to name constraints,
+  which is optional in RFC 5280.
 
 - **missing_basic_constraint** - Certificate, required to have the basic
   constraints extension, does not have a basic constraints extension.
@@ -1659,6 +1666,11 @@ Explanations of reasons for a bad certificate:
 
 - **invalid_validity_dates** - The validity section of the X.509 certificate(s)
   contains invalid date formats not matching the RFC.
+
+- **policy_tree_exceeded** - The certificate chain's policy tree exceeded the
+  maximum allowed node count. This indicates a malformed or malicious chain with
+  exponentially expanding policy mappings. This error cannot be overridden by the
+  `verify_fun`.
 
 - **atom()** - Application-specific error reason that is to be checked by the
   `verify_fun`.
@@ -1901,26 +1913,8 @@ pkix_verify_hostname(Cert = #'OTPCertificate'{tbsCertificate = TbsCert}, Referen
     %% PresentedIDs example: [{dNSName,"ewstest.ericsson.com"}, {dNSName,"www.ericsson.com"}]}
     case PresentedIDs of
 	[] ->
-	    %% Fallback to CN-ids [rfc6125, ch6]
-	    case TbsCert#'OTPTBSCertificate'.subject of
-		{rdnSequence,RDNseq} ->
-		    PresentedCNs =
-			[{cn, to_string(V)}
-			 || ATVs <- RDNseq, % RDNseq is list-of-lists
-			    #'AttributeTypeAndValue'{type = ?'id-at-commonName',
-						     value = {_T,V}} <- ATVs
-						% _T = kind of string (teletexString etc)
-			],
-		    %% Example of PresentedCNs:  [{cn,"www.ericsson.se"}]
-		    %% match ReferenceIDs to PresentedCNs
-		    verify_hostname_match_loop(verify_hostname_fqnds(ReferenceIDs, FqdnFun),
-					       PresentedCNs,
-					       MatchFun, FailCB, Cert);
-		
-		_ ->
-		    false
-	    end;
-	_ ->
+          false;
+        _ ->
 	    %% match ReferenceIDs to PresentedIDs
 	    case verify_hostname_match_loop(ReferenceIDs, PresentedIDs,
 					    MatchFun, FailCB, Cert) of
@@ -2805,10 +2799,6 @@ verify_hostname_fqnds(L, FqdnFun) ->
 verify_hostname_match_default(Ref, Pres) ->
     verify_hostname_match_default0(to_lower_ascii(Ref), to_lower_ascii(Pres)).
 
-verify_hostname_match_default0(FQDN=[_|_], {cn,FQDN}) -> 
-    not lists:member($*, FQDN);
-verify_hostname_match_default0(FQDN=[_|_], {cn,Name=[_|_]}) -> 
-    verify_hostname_match_wildcard(FQDN, Name);
 verify_hostname_match_default0({dns_id,R}, {dNSName,P}) ->
     R==P;
 verify_hostname_match_default0({uri_id,R}, {uniformResourceIdentifier,P}) ->

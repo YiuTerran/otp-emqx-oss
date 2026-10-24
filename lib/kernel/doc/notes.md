@@ -21,6 +21,55 @@ limitations under the License.
 
 This document describes the changes made to the Kernel application.
 
+## Kernel 10.2.7.5
+
+### Fixed Bugs and Malfunctions
+
+- A field in `net_kernel`'s internal state was not cleaned up in some cases for failed connections could cause the state to grow indefinitely over time.  This has now been fixed.
+
+  Own Id: OTP-20265 Aux Id: [GH-11308], [PR-11388]
+
+- Handling of the truncation bit in `inet_res` has been fixed so it properly falls back to querying over TCP after a truncated UDP reply.
+  
+  This fixes a bug introduced in OTP-27.3.4.10, kernel-10.2.7.4 making a truncated UDP answer fail to parse and never execute the fallback, instead the name resolve operation fails.
+
+  Own Id: OTP-20349 Aux Id: ERIERL-1352, [PR-11247], OTP-20199, OTP-20037
+
+[GH-11308]: https://github.com/erlang/otp/issues/11308
+[PR-11388]: https://github.com/erlang/otp/pull/11388
+[PR-11247]: https://github.com/erlang/otp/pull/11247
+
+## Kernel 10.2.7.4
+
+### Fixed Bugs and Malfunctions
+
+- Before this patch, the Erlang/OTP built-in DNS resolver (`inet_res`) used a sequential, process-global 16-bit transaction ID for UDP queries and did not implement source port randomization. Response validation relied almost entirely on this ID. Together, this made DNS cache poisoning practical for an attacker who can observe one query or predict the next ID. The design conflicted with RFC 5452 recommendations for mitigating forged DNS answers.
+  
+  `inet_res` is intended for use in trusted network environments and with trusted recursive resolvers. Earlier documentation did not clearly state this deployment assumption, which could lead users to deploy the resolver in environments where faked DNS responses are possible.
+  
+  Therefore, the documentation is been updated to clarify that `inet_res` should only be used in trusted networks and with trusted recursive resolvers.
+  
+  The implementation is also improved to use strong random DNS transaction IDs and source ports for every DNS transaction. This should give ample protection against brute forcing fake DNS replies, known as DNS cache poisoning, but it still does not protect against, for example, an adversary in the path of the DNS transaction that can observe the random values before faking malicious replies, an attack known as DNS spoofing.
+  
+  For randomization to happen, the Crypto application has to be loaded, which most probably already should be the case for an Erlang node in an exposed network.
+  
+  If performance should become an issue, for applications within safe network environments, the previous light weight behaviour can be configured by setting the resolver option `random` to `false`.
+
+  Own Id: OTP-20037 Aux Id: [CVE-2026-28810], [PR-10864]
+
+[CVE-2026-28810]: https://nvd.nist.gov/vuln/detail/2026-28810
+[PR-10864]: https://github.com/erlang/otp/pull/10864
+
+## Kernel 10.2.7.3
+
+### Improvements and New Features
+
+- Option(s) to create `gen_tcp` and `socket` sockets with protocol IPPROTO_MPTCP has been implemented.
+  
+  See functions `gen_tcp:listen/2`, `gen_tcp:connect/4` and the type `t:socket:protocol/0`.
+
+  Own Id: OTP-19814
+
 ## Kernel 10.2.7.2
 
 ### Fixed Bugs and Malfunctions

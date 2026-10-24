@@ -21,6 +21,27 @@ limitations under the License.
 
 This document describes the changes made to the Erl_interface application.
 
+## Erl_Interface 5.5.2.2
+
+### Fixed Bugs and Malfunctions
+
+- erl_interface: Fix buffer leak and state corruption on `ei_x_buff` realloc failure
+
+  Own Id: OTP-20324 Aux Id: [PR-11492]
+
+[PR-11492]: https://github.com/erlang/otp/pull/11492
+
+## Erl_Interface 5.5.2.1
+
+### Fixed Bugs and Malfunctions
+
+- Fixed stack overflow in `ei_s_print_term` for very big integer terms (> 2000 hexadecimal digits long).
+
+  Own Id: OTP-20160 Aux Id: [PR-11193], GHSA-xcxj-5pg2-v72j,[CVE-2026-49760]
+
+[PR-11193]: https://github.com/erlang/otp/pull/11193
+[CVE-2026-49760]: https://nvd.nist.gov/vuln/detail/2026-49760
+
 ## Erl_Interface 5.5.2
 
 ### Improvements and New Features

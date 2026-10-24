@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  * 
- * Copyright Ericsson AB 2015-2021. All Rights Reserved.
+ * Copyright Ericsson AB 2015-2026. All Rights Reserved.
  * 
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -2757,7 +2757,7 @@ erts_cancel_port_timer(Port *c_prt)
     if (tval == ERTS_PTMR_TIMEDOUT) {
 	while (!erts_port_task_is_scheduled(&c_prt->timeout_task))
 	    erts_thr_yield();
-	erts_port_task_abort(&c_prt->timeout_task);
+        erts_port_task_abort(c_prt, &c_prt->timeout_task);
 	erts_atomic_set_nob(&c_prt->common.timer, ERTS_PTMR_NONE);
 	return;
     }

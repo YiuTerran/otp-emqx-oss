@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2000-2024. All Rights Reserved.
+%% Copyright Ericsson AB 2000-2025. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -75,10 +75,12 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 open(Protocol, Family, Type) ->
-    open(Protocol, Family, Type, [], ?INET_REQ_OPEN, []).
+    P = enc_proto(Protocol),
+    open(Protocol, Family, Type, [], ?INET_REQ_OPEN, [P]).
 
 open(Protocol, Family, Type, Opts) ->
-    open(Protocol, Family, Type, Opts, ?INET_REQ_OPEN, []).
+    P = enc_proto(Protocol),
+    open(Protocol, Family, Type, Opts, ?INET_REQ_OPEN, [P]).
 
 %% FDOPEN(tcp|udp|sctp, inet|inet6|local, stream|dgram|seqpacket, integer())
 
@@ -124,14 +126,21 @@ enc_type(stream) -> ?INET_TYPE_STREAM;
 enc_type(dgram) -> ?INET_TYPE_DGRAM;
 enc_type(seqpacket) -> ?INET_TYPE_SEQPACKET.
 
-protocol2drv(tcp)  -> "tcp_inet";
-protocol2drv(udp)  -> "udp_inet";
-protocol2drv(sctp) -> "sctp_inet".
+protocol2drv(tcp)   -> "tcp_inet";
+protocol2drv(udp)   -> "udp_inet";
+protocol2drv(sctp)  -> "sctp_inet";
+protocol2drv(mptcp) -> "tcp_inet".
 
 drv2protocol("tcp_inet")  -> tcp;
 drv2protocol("udp_inet")  -> udp;
 drv2protocol("sctp_inet") -> sctp;
 drv2protocol(_)           -> undefined.
+
+enc_proto(default) -> ?INET_PROTO_DEFAULT;
+enc_proto(tcp)     -> ?INET_PROTO_TCP;
+enc_proto(udp)     -> ?INET_PROTO_UDP;
+enc_proto(sctp)    -> ?INET_PROTO_SCTP;
+enc_proto(mptcp)   -> ?INET_PROTO_MPTCP.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%

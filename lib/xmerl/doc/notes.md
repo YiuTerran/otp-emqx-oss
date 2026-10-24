@@ -21,6 +21,26 @@ limitations under the License.
 
 This document describes the changes made to the Xmerl application.
 
+## Xmerl 2.1.3.3
+
+### Fixed Bugs and Malfunctions
+
+- XML regular expressions in XSD validation now handle `\s` and `\S` correctly.
+
+  Own Id: OTP-19762 Aux Id: ERIERL-1260, [PR-10437]
+
+[PR-10437]: https://github.com/erlang/otp/pull/10437
+
+## Xmerl 2.1.3.2
+
+### Fixed Bugs and Malfunctions
+
+- The XSD validation failed due to not handling the optional text blocks correctly in an XSD complex type with attribute `mixed=true`.
+
+  Own Id: OTP-19792 Aux Id: ERERL-1261,[PR-10249]
+
+[PR-10249]: https://github.com/erlang/otp/pull/10249
+
 ## Xmerl 2.1.3.1
 
 ### Fixed Bugs and Malfunctions

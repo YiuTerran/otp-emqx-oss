@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2010-2025. All Rights Reserved.
+ * Copyright Ericsson AB 2010-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -105,7 +105,7 @@ ERL_NIF_TERM evp_compute_key_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM ar
     return ret;
 
 #else
-    return atom_notsup;
+    return EXCP_NOTSUP(env, "EDDH not supported");
 #endif
 }
 
@@ -178,7 +178,7 @@ ERL_NIF_TERM evp_generate_key_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM a
     return ret;
 
 #else
-    return atom_notsup;
+    return EXCP_NOTSUP(env, "EDDH not supported");
 #endif
 }
 

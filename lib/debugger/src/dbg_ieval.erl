@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 1998-2024. All Rights Reserved.
+%% Copyright Ericsson AB 1998-2025. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -681,7 +681,7 @@ expr({record_update,Line,Es},Bs,#ieval{level=Le}=Ieval0) ->
     Ieval = Ieval0#ieval{top=false, line=Line, level=Le+1},
     Seq = fun(E, {_, _, Bs1}) -> expr(E, Bs1, Ieval) end,
     {value,Value,Bs1} = lists:foldl(Seq, {value, true, Bs}, Es),
-    {value,Value,remove_temporary_bindings(Bs1)};
+    {value,Value,remove_temporary_bindings(Bs1, Bs)};
 
 %% A block of statements
 expr({block,Line,Es},Bs,Ieval) ->
@@ -1846,8 +1846,9 @@ add_binding(N,Val,[B1|Bs]) ->
 add_binding(N,Val,[]) ->
     [{N,Val}].
 
-remove_temporary_bindings(Bs0) ->
-    [{Var,Val} || {Var, Val} <- Bs0, hd(atom_to_list(Var)) =/= $%].
+remove_temporary_bindings(Bs0, Bs) ->
+    [{Var,Val} || {Var, Val} <- Bs0, hd(atom_to_list(Var)) =/= $% orelse
+                      lists:keymember(Var, 1, Bs)].
 
 %% get_stacktrace() -> Stacktrace
 %%  Return the latest stacktrace for the process.

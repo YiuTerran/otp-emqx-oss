@@ -25,6 +25,34 @@ as all enhancements and bugfixes for every release of Megaco. Each release of
 Megaco thus constitutes one section in this document. The title of each section
 is the version number of Megaco.
 
+## Megaco 4.7.2.3
+
+### Fixed Bugs and Malfunctions
+
+- Numeric fields in megaco text-encoded messages are now validated for digit-string length before integer conversion, improving robustness of the text decoder. Per-field digit limits based on the H.248.1 ASN.1 type constraints are enforced (e.g., 10 digits for UINT32, 2 digits for timer values), along with a 100 KB overall message size cap at the scanner entry point. The binary (BER/PER) codec is not affected.
+
+  Own Id: OTP-20234 Aux Id: [PR-11325]
+
+[PR-11325]: https://github.com/erlang/otp/pull/11325
+
+## Megaco 4.7.2.2
+
+### Fixed Bugs and Malfunctions
+
+- Fixed a buffer overflow in the megaco flex scanner C driver. A property parm name exceeding 452 bytes in a text-encoded H.248 message could overflow a fixed-size error buffer, crashing the VM. The sprintf calls have been replaced with bounded snprintf.
+
+  Own Id: OTP-20237 Aux Id: [PR-11323], GHSA-7xgh-gmgf-q2g7
+
+[PR-11323]: https://github.com/erlang/otp/pull/11323
+
+## Megaco 4.7.2.1
+
+### Fixed Bugs and Malfunctions
+
+- The megaco_tcp module had debug unintentionally enabled.
+
+  Own Id: OTP-19896
+
 ## Megaco 4.7.2
 
 ### Fixed Bugs and Malfunctions

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1999-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1999-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -483,18 +483,24 @@ configuration in TLS-1.3.
 -type kex_algo()                :: ecdhe_ecdsa
                                  | ecdh_ecdsa
                                  | ecdh_rsa
-                                 | rsa
+                                 | any %% TLS 1.3 (any of TLS-1.3 keyexchanges) , exported
+                                 | legacy_kex().
+
+-doc(#{group => <<"Algorithms Legacy">>}).
+-doc """
+Backwards compatibility and legacy interoperability not recommended.
+""".
+-type legacy_kex()              :: rsa
+                                 | rsa_psk
                                  | dhe_rsa
                                  | dhe_dss
                                  | srp_rsa
                                  | srp_dss
                                  | dhe_psk
-                                 | rsa_psk
                                  | psk
                                  | ecdh_anon
                                  | dh_anon
-                                 | srp_anon
-                                 |  any. %% TLS 1.3 (any of TLS-1.3 keyexchanges) , exported
+                                 | srp_anon.
 
 
 -doc(#{title => <<"Algorithms">>}).
@@ -588,9 +594,7 @@ SRP cipher suite configuration prior to TLS-1.3.
                                | srp_6144
                                | srp_4096
                                | srp_3072
-                               | srp_2048
-                               | srp_1536
-                               | srp_1024. % exported
+                               | srp_2048.
 
 -doc(#{title => <<"Socket">>}).
 -doc """
@@ -1239,6 +1243,17 @@ There are two implementations available:
     extensions](`e:public_key:public_key_records.md`). Requires the
     [Inets](`e:inets:introduction.md`) application.
 
+- **`{allowed_hosts, [string()]}`**
+
+    If http fetching is allowed, a list of allowed hosts can be
+    specified as a hardening option. The entries should be
+    "Host:Port". If ":Port" is left out the default port is 80. If the
+    allowed_hosts is not specified only an external hosts using port
+    80 or 8080 will be allowed.
+
+   > #### Note {: .info }
+   Putting the local host on the allow list will of course make the local host allowed.
+
 - **`ssl_crl_hash_dir`** - Implementation 2
 
   This module makes use of a directory where CRLs are
@@ -1517,9 +1532,32 @@ different semantics for the client and server.
   > #### Note {: .info }
   >
   > Even if requested by the client, the OCSP response might not be
-  > provided by the server. In such event, SSL will proceed with
-  > the handshake and generate a `{missing, stapling_response}` logger
-  > event.
+  > provided by the server. In such event, the certificate validation
+  > will fail with reason `missing_ocsp_staple`. Capturing this
+  > failure with a custom `verify_fun` enables the user to implement
+  > their own fallback validation, for example by performing a direct
+  > OCSP query or a CRL check. Note however that accepting
+  > `{bad_cert, missing_ocsp_staple}` without performing alternative
+  > revocation checking is insecure, as it allows a MITM attacker to
+  > suppress revocation information by omitting the OCSP staple.
+  >
+  > ```erlang
+  > {verify_fun, {fun(_, _, {bad_cert, missing_ocsp_staple} = R, _St) ->
+  >                       %% Implement fallback revocation check here,
+  >                       %% e.g. a direct OCSP query or CRL check.
+  >                       %% Simply returning {valid, St} skips
+  >                       %% revocation checking entirely.
+  >                       {fail, R};
+  >                  (_, _, {bad_cert, _} = R, _) ->
+  >                       {fail, R};
+  >                  (_, _, {extension, _}, St) ->
+  >                       {unknown, St};
+  >                  (_, _, valid, St) ->
+  >                       {valid, St};
+  >                  (_, _, valid_peer, St) ->
+  >                       {valid, St}
+  >               end, []}}
+  > ```
 
   When `Stapling` is given as a map, boolean `ocsp_nonce` key can
   indicate whether an OCSP nonce should be requested by the client
@@ -1841,7 +1879,7 @@ Certificate related options for a server.
   `true`, the server fails if the client does not have a certificate to send, that
   is, sends an empty certificate. If set to `false`, it fails only if the client
   sends an invalid certificate (an empty certificate is considered valid).
-  Defaults to `false`.
+  Defaults to `true`, the default value was changed in OTP-26.0.
 
 - **`{certificate_authorities, ServerCertAuth}`** - Inter-operate hint option
 
@@ -1925,7 +1963,7 @@ Options only relevant to TLS versions prior to TLS-1.3.
   The DER-encoded Diffie-Hellman parameters. If specified, it overrides option
   `dhfile`.
 
-- **`{dh_file, DHfile}`** - Affects DH key exchange cipher suites
+- **`{dhfile, DHfile}`** - Affects DH key exchange cipher suites
 
   Path to a file containing PEM-encoded Diffie Hellman parameters to be used by
   the server if a cipher suite using Diffie Hellman key exchange is negotiated. If
@@ -2034,6 +2072,13 @@ Options only relevant for TLS-1.3.
 
   Configures if the server accepts (`enabled`) or rejects (`disabled`) early data
   sent by a client. The default value is `disabled`.
+
+ > #### Warning {: .warning }
+ >  0-RTT data is inherently replay-vulnerable by TLS 1.3 design. The
+ > mitigation is application-level idempotency or server-side anti-replay.
+ > The server side mechanisms for anti-replay are stateful tickets or stateless
+ > tickets with a configured Bloom filter.
+
 """.
 -type server_option_tls13() :: {session_tickets, SessionTickets:: disabled | stateful | stateless |
                                                                   stateful_with_cert | stateless_with_cert} |
@@ -2494,9 +2539,11 @@ handshake(#sslsocket{fd = {_, _, _, Trackers}} = Socket, SslOpts, Timeout)
   when is_list(SslOpts), ?IS_TIMEOUT(Timeout) ->
     try
         Tracker = proplists:get_value(option_tracker, Trackers),
-	{ok, EmOpts, _} = tls_socket:get_all_opts(Tracker),
-	ssl_gen_statem:handshake(Socket, {SslOpts,
-					  tls_socket:emulated_socket_options(EmOpts, #socket_options{})}, Timeout)
+        {ok, EmOpts} = tls_socket:get_emulated_opts(Tracker),
+	ssl_gen_statem:handshake(Socket,
+                                 {SslOpts,
+                                  tls_socket:emulated_socket_options(EmOpts,
+                                                                     #socket_options{})}, Timeout)
     catch
 	Error = {error, _Reason} -> Error
     end;
@@ -2924,7 +2971,7 @@ Equivalent to `cipher_suites/2`, but lists RFC or OpenSSL string names instead o
 -doc(#{title => <<"Utility Functions">>,
        since => <<"OTP 22.0">>}).
 -spec cipher_suites(Description, Version, StringType) -> [string()] when
-      Description :: default | all | exclusive | anonymous,
+      Description :: default | all | exclusive | anonymous | exclusive_anonymous,
       Version :: protocol_version(),
       StringType :: rfc | openssl.
 
@@ -3089,7 +3136,7 @@ rsa_pss_rsae_sha512,rsa_pss_rsae_sha384,rsa_pss_rsae_sha256]
        since => <<"OTP 26.0">>}).
 -spec signature_algs(Description, Version) -> signature_algs() when
       Description :: default | all | exclusive,
-      Version :: protocol_version().
+      Version :: 'tlsv1.3' | 'tlsv1.2' | 'dtlsv1.2'.
 %%--------------------------------------------------------------------
 
 signature_algs(default, 'tlsv1.3') ->
@@ -3395,7 +3442,7 @@ sockname(#sslsocket{pid = [Pid| _], fd = {Transport, Socket,_,_}}) when is_pid(P
 Lists information, mainly concerning TLS/DTLS versions, in runtime for debugging
 and testing purposes.
 
-- **`app_vsn`** - The application version of the SSL application.
+- **`ssl_app`** - The application version of the SSL application.
 
 - **`supported`** - TLS versions supported with current application environment
   and crypto library configuration. Overridden by a version option on
@@ -4328,7 +4375,6 @@ opt_tickets(UserOpts, #{versions := Versions} = Opts, #{role := client}) ->
                         [early_data, {session_tickets, disabled}]),
     option_incompatible(is_binary(EarlyData) andalso SessionTickets =:= manual andalso UseTicket =:= undefined,
                         [early_data, {session_tickets, manual}, {use_ticket, undefined}]),
-
     assert_server_only(anti_replay, UserOpts),
     assert_server_only(stateless_tickets_seed, UserOpts),
     Opts#{session_tickets => SessionTickets, use_ticket => UseTicket, early_data => EarlyData};
@@ -4357,6 +4403,15 @@ opt_tickets(UserOpts, #{versions := Versions} = Opts, #{role := server}) ->
             {_, {_,_,_} = AR} -> AR;
             {_, AR} -> option_error(anti_replay, AR)
         end,
+
+    case EarlyData =:= enabled andalso Stateless andalso
+         AntiReplay =:= undefined of
+        true ->
+            ?LOG_WARNING("early_data enabled without anti_replay; "
+                         "0-RTT data is replayable");
+        false ->
+            ok
+    end,
 
     {_, STS} = get_opt_bin(stateless_tickets_seed, undefined, UserOpts, Opts),
     option_incompatible(STS =/= undefined andalso not Stateless,
@@ -4671,7 +4726,16 @@ opt_reuse_sessions(UserOpts, #{versions := Versions} = Opts, #{role := client}) 
     assert_version_dep(Where2 =:= new, reuse_session, Versions, ['tlsv1','tlsv1.1','tlsv1.2']),
     Opts#{reuse_sessions => RUSS, reuse_session => RS};
 opt_reuse_sessions(UserOpts, #{versions := Versions} = Opts, #{role := server}) ->
-    {Where1, RUSS} = get_opt_bool(reuse_sessions, true, UserOpts, Opts),
+    %% Disable reuse_sessions when client cert verify_peer
+    %% verification is required, until Extended Master Secret is implemented.
+    ReuseDefault = case maps:get(verify, Opts) of
+                       verify_peer ->
+                           false;
+                       verify_none ->
+                           true
+                   end,
+
+    {Where1, RUSS} = get_opt_bool(reuse_sessions, ReuseDefault, UserOpts, Opts),
 
     DefRS = fun(_, _, _, _) -> true end,
     {Where2, RS} = get_opt_fun(reuse_session, 4, DefRS, UserOpts, Opts),
@@ -4749,9 +4813,22 @@ opt_supported_groups(UserOpts, #{versions := TlsVsns} = Opts, _Env) ->
     Opts#{ciphers => CPHS, eccs => ECCS, supported_groups => SG}.
 
 opt_crl(UserOpts, Opts, _Env) ->
+    ManagerType = case maps:get(erl_dist, Opts, false) of
+                      false ->
+                          normal;
+                      true ->
+                          dist
+                  end,
     {_, Check} = get_opt_of(crl_check, [best_effort, peer, true, false], false, UserOpts, Opts),
-    Cache = case get_opt(crl_cache, {ssl_crl_cache, {internal, []}}, UserOpts, Opts) of
-                {_, {Cb, {_Handle, Options}} = Value} when is_atom(Cb), is_list(Options) ->
+    Cache = case get_opt(crl_cache, {ssl_crl_cache, {internal, [{owner, ManagerType}]}},
+                        UserOpts, Opts) of
+                {default, {ssl_crl_cache, {_Handle, _Options}} = Value} ->
+                    Value;
+                {old, {ssl_crl_cache, {_Handle, _Options}} = Value} ->
+                    Value;
+                {new, {ssl_crl_cache, {Handle, Options}}} when is_list(Options) ->
+                    {ssl_crl_cache, {Handle, [{owner, ManagerType} | Options]}};
+                {_, {Cb, {_Handle, Options}} = Value}  when is_atom(Cb), is_list(Options) ->
                     Value;
                 {_, Err} ->
                     option_error(crl_cache, Err)

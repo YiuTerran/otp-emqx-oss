@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2020-2024. All Rights Reserved.
+ * Copyright Ericsson AB 2020-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -1203,7 +1203,7 @@ void BeamModuleAssembler::emit_is_binary(const ArgLabel &Fail,
                 a.mov(RET,
                       emit_boxed_val(boxed_ptr, offsetof(ErlHeapBits, size)));
 
-                a.mov(ARG2d, emit_boxed_val(boxed_ptr));
+                a.mov(ARG2d, emit_boxed_val(boxed_ptr, 0, sizeof(Uint32)));
                 a.cmp(ARG2d, imm(HEADER_SUB_BITS));
                 a.short_().jne(not_sub_bits);
                 {
@@ -1862,7 +1862,7 @@ void BeamModuleAssembler::emit_is_eq_exact(const ArgLabel &Fail,
                 a.cmp(emit_boxed_val(boxed_ptr), imm(HEADER_SUB_BITS));
             } else {
                 a.mov(RETd, emit_boxed_val(boxed_ptr, 0, sizeof(Uint32)));
-                a.cmp(RETb, imm(HEADER_SUB_BITS));
+                a.cmp(RETd, imm(HEADER_SUB_BITS));
             }
             a.short_().jne(not_sub_bits);
 
@@ -2021,7 +2021,7 @@ void BeamModuleAssembler::emit_is_ne_exact(const ArgLabel &Fail,
                 a.cmp(emit_boxed_val(boxed_ptr), imm(HEADER_SUB_BITS));
             } else {
                 a.mov(RETd, emit_boxed_val(boxed_ptr, 0, sizeof(Uint32)));
-                a.cmp(RETb, imm(HEADER_SUB_BITS));
+                a.cmp(RETd, imm(HEADER_SUB_BITS));
             }
             a.short_().jne(not_sub_bits);
 
@@ -2717,14 +2717,17 @@ void BeamModuleAssembler::emit_is_in_range(ArgLabel const &Small,
                         RET);
                     a.ja(resolve_beam_label(Small));
                 },
-                ARG1);
+                ARG1,
+                RET);
     } else {
-        preserve_cache([&]() {
-            cmp(ARG1, Min.as<ArgImmed>().get(), RET);
-            a.jl(resolve_beam_label(Small));
-            cmp(ARG1, Max.as<ArgImmed>().get(), RET);
-            a.jg(resolve_beam_label(Large));
-        });
+        preserve_cache(
+                [&]() {
+                    cmp(ARG1, Min.as<ArgImmed>().get(), RET);
+                    a.jl(resolve_beam_label(Small));
+                    cmp(ARG1, Max.as<ArgImmed>().get(), RET);
+                    a.jg(resolve_beam_label(Large));
+                },
+                RET);
     }
 
 test_done:

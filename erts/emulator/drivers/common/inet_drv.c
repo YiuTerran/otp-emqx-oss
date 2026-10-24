@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1997-2024. All Rights Reserved.
+ * Copyright Ericsson AB 1997-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -764,6 +764,13 @@ static size_t my_strnlen(const char *s, size_t maxlen)
 #define INET_TYPE_STREAM    1
 #define INET_TYPE_DGRAM     2
 #define INET_TYPE_SEQPACKET 3
+
+/* open protocol */
+#define INET_PROTO_DEFAULT  0
+#define INET_PROTO_TCP      1
+#define INET_PROTO_UDP      2
+#define INET_PROTO_SCTP     3
+#define INET_PROTO_MPTCP    4
 
 /* INET_LOPT_MODE options */
 #define INET_MODE_LIST      0
@@ -1598,6 +1605,7 @@ static ErlDrvTermData am_sendfile;
 #endif
 
 static char str_eafnosupport[] = "eafnosupport";
+static char str_eprotonosupport[] = "eprotonosupport";
 static char str_einval[] = "einval";
 
 /* special errors for bad ports and sequences */
@@ -3405,50 +3413,69 @@ static int sctp_parse_ancillary_data
 ** concerns the protocol implementation), so we omit it:
 */
 static int sctp_parse_error_chunk
-       (ErlDrvTermData * spec, int i, char * chunk, int chlen)
+      (ErlDrvTermData * spec, int i, int spec_size, char * chunk, int chlen)
 {
     /* The "chunk" itself contains its length, which must not be greater than
        the "chlen" derived from the over-all msg size:
     */
-    char *causes, *cause;
-    int coff,  /* Cause offset */
-	ccode, /* Cause code */
-	clen,  /* cause length */
-	s;
-    int len = sock_ntohs (*((uint16_t*)(chunk+2)));
-    ASSERT(len >= 4 && len <= chlen);
+    char *cause; /* Current cause pointer */
+    int   len;   /* Remaining chunk length, chlen - (cause - chunk) */
+    int   s;     /* List length */
 
-    causes = chunk + 4;
-    coff   = 0;
-    len -= 4;  /* Total length of the "causes" fields */
-    cause  = causes;
-    s      = 0;
+    s = 0;
+    len = sock_ntohs (*((uint16_t*)(chunk+2)));
+    len = MIN(len, chlen);
+    cause = chunk;
 
-    while (coff < len)
-    {
+    /* There should be at least chunk header + one error code */
+    if (len < 4+4) goto truncate;
+    /* Step over chunk header */
+    len   -= 4;
+    cause += 4;
+
+    /* When len == 0 we have a clean end of Error causes */
+    while (len > 0) {
+        int ccode, clen;  /* Cause code, cause length */
+
+        if (len < 4) goto truncate;
 	ccode = sock_ntohs (*((uint16_t*)(cause)));
 	clen  = sock_ntohs (*((uint16_t*)(cause + 2)));
-	if (clen <= 0)
-	    /* Strange, but must guard against that!  */
-	    break;
-
-	/* Install the corresp atom for this "ccode": */
-	i = LOAD_INT (spec, i, ccode);
-	cause += clen;
-	coff  += clen;
-	s ++;
+        if (clen < 4) goto truncate;
+        /* Install the corresp atom for this "ccode": */
+	i = LOAD_INT (spec, i, ccode); s++;
+        if (i + 2*LOAD_INT_CNT+LOAD_NIL_CNT+LOAD_LIST_CNT > spec_size) {
+            /* We do not have room for two INT:s which is
+             * the worst case for the next iteration, so truncate now.
+             *
+             * We should have room for the truncation marker since
+             * we have added at most one INT after the previous check.
+             */
+            goto truncate;
+        }
+        if (len < clen) goto truncate;
+        /* Step over Error cause */
+        len   -= clen;
+        cause += clen;
     }
-    i = LOAD_NIL (spec, i);
-    i = LOAD_LIST(spec, i, s+1);
+    goto done;
+
+ truncate:
+    /* Truncation marker - there is no error 0 */
+    i = LOAD_INT (spec, i, 0); s++;
+ done:
+    /* Finalize the list */
+    i = LOAD_NIL (spec, i); s++;
+    i = LOAD_LIST(spec, i, s);
     return i;
 }
+
 
 /*
 ** Parsing of SCTP notification events. NB: they are NOT ancillary data: they
 ** are sent IN PLACE OF, not in conjunction with, the normal data:
 */
 static int sctp_parse_async_event
-      (ErlDrvTermData * spec, int i,    int ok_pos,
+      (ErlDrvTermData * spec, int i,    int spec_size,         int ok_pos,
        ErlDrvTermData   error_atom,     inet_descriptor* desc,
        ErlDrvBinary   * bin,  int offs, int sz)
 {
@@ -3582,7 +3609,7 @@ static int sctp_parse_async_event
 		+ sizeof(sptr->sre_assoc_id);
 #	    endif
 	    chlen = sptr->sre_length  - (chunk - (char *)sptr);
-	    i = sctp_parse_error_chunk(spec, i, chunk, chlen);
+	    i = sctp_parse_error_chunk(spec, i, spec_size, chunk, chlen);
 
 	    i = LOAD_TUPLE (spec, i, 4);
 	    /* The {error, {...}} will be closed by the caller */
@@ -3822,6 +3849,7 @@ inet_async_binary_data
 	 ErlDrvBinary   * bin,  int offs, int len, void *mp)
 {
     unsigned int hsz = desc->hsz + phsz;
+    const int spec_size = PACKET_ERL_DRV_TERM_DATA_LEN;
     ErlDrvTermData spec [PACKET_ERL_DRV_TERM_DATA_LEN];
     ErlDrvTermData caller;
     int aid;
@@ -3872,7 +3900,8 @@ inet_async_binary_data
 	       condition; in the latter case,   the 'ok' above is overridden by
 	       an 'error', and the Event we receive contains the error term: */
 	    i = sctp_parse_async_event
-		(spec, i, ok_pos, am_error, desc, bin, offs+hsz, sz);
+		(spec, i, spec_size - 3*LOAD_TUPLE_CNT,
+                 ok_pos, am_error, desc, bin, offs+hsz, sz);
         else
     	    /* This is SCTP data, not a notification event.   The data can be
 	       returned as a List or as a Binary, similar to the generic case:
@@ -4056,6 +4085,7 @@ static int packet_binary_message(inet_descriptor* desc,
                                  void *mp)
 {
     unsigned int hsz = desc->hsz;
+    const int spec_size = PACKET_ERL_DRV_TERM_DATA_LEN;
     ErlDrvTermData spec [PACKET_ERL_DRV_TERM_DATA_LEN];
     int i = 0;
     int alen;
@@ -4118,14 +4148,16 @@ static int packet_binary_message(inet_descriptor* desc,
 	i = sctp_parse_ancillary_data (spec, i, mptr);
 
 	/* Then: Data or Event (Notification)? */
-	if (mptr->msg_flags & MSG_NOTIFICATION)
+	if (mptr->msg_flags & MSG_NOTIFICATION) {
 	    /* This is an Event, parse it. It may indicate a normal or an error
 	       condition; in the latter case,  the initial 'sctp' atom is over-
 	       ridden by 'sctp_error',   and the Event we receive contains the
 	       error term: */
 	    i = sctp_parse_async_event
-		(spec, i, 0, am_sctp_error, desc, bin, offs, len);
-        else
+		(spec, i, spec_size - 2*LOAD_TUPLE_CNT,
+                 0, am_sctp_error, desc, bin, offs, len);
+        }
+        else {
     	    /* This is SCTP data, not a notification event.   The data can be
 	       returned as a List or as a Binary, similar to the generic case:
 	    */
@@ -4137,6 +4169,7 @@ static int packet_binary_message(inet_descriptor* desc,
 	    else
 	    	/* INET_MODE_BINARY => Binary */
 		i = LOAD_BINARY(spec, i, bin, offs, len);
+        }
 
 	/* Close up the {[AncilData], Event_OR_Data} tuple: */
 	i = LOAD_TUPLE (spec, i, 2);
@@ -5059,11 +5092,12 @@ static int erl_inet_close(inet_descriptor* desc)
     return 0;
 }
 
-static ErlDrvSSizeT inet_ctl_open(inet_descriptor* desc, int domain, int type,
-				  char** rbuf, ErlDrvSizeT rsize)
+static
+ErlDrvSSizeT inet_ctl_open(inet_descriptor* desc,
+                           int domain, int type, int protocol,
+                           char** rbuf, ErlDrvSizeT rsize)
 {
     int save_errno;
-    int protocol;
 #ifdef HAVE_SETNS
     int current_ns, new_ns;
     current_ns = new_ns = 0;
@@ -5106,7 +5140,6 @@ static ErlDrvSSizeT inet_ctl_open(inet_descriptor* desc, int domain, int type,
 	}
     }
 #endif
-    protocol = desc->sprotocol;
 #ifdef HAVE_SYS_UN_H
     if (domain == AF_UNIX) protocol = 0;
 #endif
@@ -9650,8 +9683,8 @@ static ErlDrvSSizeT sctp_fill_opts(inet_descriptor* desc,
     int i      = 0;
     int length = 0; /* Number of result list entries */
     
-    int spec_allocated = PACKET_ERL_DRV_TERM_DATA_LEN;
-    spec = ALLOC(sizeof(* spec) * spec_allocated);
+    int spec_size = PACKET_ERL_DRV_TERM_DATA_LEN;
+    spec = ALLOC(sizeof(* spec) * spec_size);
     
 #   define RETURN_ERROR(Spec, Errno) \
     do {                    \
@@ -9663,7 +9696,7 @@ static ErlDrvSSizeT sctp_fill_opts(inet_descriptor* desc,
 #   define PLACE_FOR(Spec, Index, N)                            \
     do {                                                        \
 	int need;                                               \
-	if ((Index) > spec_allocated) {                         \
+	if ((Index) > spec_size) {                              \
 	    erts_exit(ERTS_ERROR_EXIT,"Internal error in inet_drv, "           \
 		     "miscalculated buffer size");              \
 	}                                                       \
@@ -9671,10 +9704,10 @@ static ErlDrvSSizeT sctp_fill_opts(inet_descriptor* desc,
 	if (need > INET_MAX_OPT_BUFFER/sizeof(ErlDrvTermData)) {\
 	    RETURN_ERROR((Spec), -ENOMEM);                      \
 	}                                                       \
-	if (need > spec_allocated) {                            \
+	if (need > spec_size) {                                 \
 	    (Spec) = REALLOC((Spec),                            \
 			     sizeof(* (Spec))                   \
-			     * (spec_allocated = need + 20));   \
+			     * (spec_size = need + 20));        \
 	}                                                       \
     } while (0)
     
@@ -10690,8 +10723,8 @@ static void inet_stop(inet_descriptor* desc)
 {
     DDBG(desc,
          ("INET-DRV-DBG[%d][" SOCKET_FSTR "] "
-          "inet_stop -> entry\r\n",
-          __LINE__, desc->s) );
+          "%s -> entry\r\n",
+          __LINE__, desc->s, __FUNCTION__) );
 
     erl_inet_close(desc);
 #ifdef HAVE_SETNS
@@ -11465,7 +11498,12 @@ static int tcp_expand_buffer(tcp_descriptor* desc, int len)
     int offs1;
     int offs2;
     int used = desc->i_ptr_start - desc->i_buf->orig_bytes;
-    int ulen = used + len;
+    int ulen;
+
+    if (len > INT_MAX - used) {
+        return -1;
+    }
+    ulen = used + len;
 
     if (desc->i_bufsz >= ulen) /* packet will fit */
 	return 0;
@@ -11723,8 +11761,8 @@ static void tcp_inet_stop(ErlDrvData e)
     tcp_descriptor* desc = (tcp_descriptor*)e;
 
     DDBG(INETP(desc),
-         ("INET-DRV-DBG[%d][" SOCKET_FSTR "] tcp_inet_stop -> entry\r\n",
-          __LINE__, desc->inet.s) );
+         ("INET-DRV-DBG[%d][" SOCKET_FSTR "] %s -> entry\r\n",
+          __LINE__, desc->inet.s, __FUNCTION__) );
 
     tcp_close_check(desc);
     tcp_clear_input(desc);
@@ -11736,8 +11774,9 @@ static void tcp_inet_stop(ErlDrvData e)
 
         DDBG(INETP(desc),
              ("INET-DRV-DBG[%d][" SOCKET_FSTR "] "
-              "tcp_inet_stop -> SENDFILE dup closed %d\r\n",
-              __LINE__, desc->inet.s, desc->sendfile.dup_file_fd) );
+              "%s -> SENDFILE dup closed %d\r\n",
+              __LINE__, desc->inet.s,
+              __FUNCTION__, desc->sendfile.dup_file_fd) );
 
     }
 #endif
@@ -11784,13 +11823,13 @@ static ErlDrvSSizeT tcp_inet_ctl(ErlDrvData e, unsigned int cmd,
     switch(cmd) {
 
     case INET_REQ_OPEN: { /* open socket and return internal index */
-	int domain;
+	int domain, protocol;
 
 	DDBG(INETP(desc),
 	     ("INET-DRV-DBG[%d][%T] tcp_inet_ctl -> OPEN\r\n",
 	      __LINE__, driver_caller(desc->inet.port)) );
 
-	if (len != 2) return ctl_error(EINVAL, rbuf, rsize);
+	if (len != 3) return ctl_error(EINVAL, rbuf, rsize);
 	switch(buf[0]) {
 	case INET_AF_INET:
 	    domain = AF_INET;
@@ -11809,7 +11848,18 @@ static ErlDrvSSizeT tcp_inet_ctl(ErlDrvData e, unsigned int cmd,
 	    return ctl_xerror(str_eafnosupport, rbuf, rsize);
 	}
 	if (buf[1] != INET_TYPE_STREAM) return ctl_error(EINVAL, rbuf, rsize);
-	return inet_ctl_open(INETP(desc), domain, SOCK_STREAM, rbuf, rsize);
+        switch(buf[2]) {
+        case INET_PROTO_DEFAULT: protocol = 0; break;
+        case INET_PROTO_TCP: protocol = IPPROTO_TCP; break;
+#ifdef IPPROTO_MPTCP
+        case INET_PROTO_MPTCP: protocol = IPPROTO_MPTCP; break;
+#endif
+        default:
+            return ctl_xerror(str_eprotonosupport, rbuf, rsize);
+        }
+	return
+            inet_ctl_open(INETP(desc),
+                          domain, SOCK_STREAM, protocol, rbuf, rsize);
 	break;
     }
 
@@ -12271,17 +12321,81 @@ static ErlDrvSSizeT tcp_inet_ctl(ErlDrvData e, unsigned int cmd,
 
 static int tcp_inet_send_timeout(ErlDrvData e, ErlDrvTermData dummy)
 {
-    tcp_descriptor* desc = (tcp_descriptor*)e;
+    tcp_descriptor* desc   = (tcp_descriptor*)e;
+    SOCKET          sock   = desc->inet.s;
+    int             result = 1;
+
     ASSERT(IS_BUSY(INETP(desc)));
     ASSERT(desc->busy_on_send);
+
+    DDBG(INETP(desc),
+         ("INET-DRV-DBG[%d][" SOCKET_FSTR "] "
+          "%s -> entry when"
+          "\r\n   Send Timeout Close: %s"
+          "\r\n   Active:             %s"
+          "\r\n",
+          __LINE__, sock, __FUNCTION__,
+          B2S(desc->send_timeout_close),
+          A2S(desc->inet.active)) );
+
     desc->inet.state &= ~INET_F_BUSY;
     desc->busy_on_send = 0;
     set_busy_port(desc->inet.port, 0);
     inet_reply_error_am(INETP(desc), am_timeout);
+
     if (desc->send_timeout_close) {
-        tcp_desc_close(desc);
+
+        if (desc->inet.active) {
+
+            DDBG(INETP(desc),
+                 ("INET-DRV-DBG[%d][" SOCKET_FSTR "] "
+                  "%s -> send 'closed' message\r\n",
+                  __LINE__, sock, __FUNCTION__) );
+
+            tcp_closed_message(desc);
+
+            if (desc->inet.exitf) {
+
+                DDBG(INETP(desc),
+                     ("INET-DRV-DBG[%d][" SOCKET_FSTR "] "
+                      "%s -> driver exit\r\n",
+                      __LINE__, sock, __FUNCTION__) );
+
+                driver_exit(desc->inet.port, 0);
+
+                result = -1;
+
+            } else {
+
+                DDBG(INETP(desc),
+                     ("INET-DRV-DBG[%d][" SOCKET_FSTR "] "
+                      "%s -> close descriptor\r\n",
+                      __LINE__, sock, __FUNCTION__) );
+
+                tcp_desc_close(desc);
+            }
+
+        } else {
+
+            DDBG(INETP(desc),
+                 ("INET-DRV-DBG[%d][" SOCKET_FSTR "] "
+                  "%s -> close descriptor\r\n",
+                  __LINE__, sock, __FUNCTION__) );
+
+            tcp_desc_close(desc);
+
+        }
+
     }
-    return 1;
+
+    DDBG(INETP(desc),
+         ("INET-DRV-DBG[%d][" SOCKET_FSTR "] "
+          "%s -> done when result: %d\r\n",
+          __LINE__, sock, __FUNCTION__,
+          result) );
+
+    return result;
+
     /* Q: Why not keep port busy as send queue may still be full (ERL-1390)?
      *
      * A: If kept busy, a following send call would hang without a timeout
@@ -12302,11 +12416,17 @@ static int tcp_inet_send_timeout(ErlDrvData e, ErlDrvTermData dummy)
 
 static void tcp_inet_timeout(ErlDrvData e)
 {
-    tcp_descriptor* desc = (tcp_descriptor*)e;
-    int state = desc->inet.state;
+    tcp_descriptor* desc  = (tcp_descriptor*)e;
+    SOCKET          sock  = desc->inet.s;
+    int             state = desc->inet.state;
 
-    DEBUGF(("tcp_inet_timeout(%p) {s=%d\r\n", 
-	    desc->inet.port, desc->inet.s)); 
+    DDBG(INETP(desc),
+         ("INET-DRV-DBG[%d][" SOCKET_FSTR "] "
+          "%s -> entry with"
+          "\r\n   State: 0x%X"
+          "\r\n",
+          __LINE__, sock, __FUNCTION__, state));
+
     if ((state & INET_F_MULTI_CLIENT)) { /* Multi-client always means multi-timers */
 	fire_multi_timers(desc, desc->inet.port, e);
     } else if ((state & INET_STATE_CONNECTED) == INET_STATE_CONNECTED) {
@@ -12328,7 +12448,13 @@ static void tcp_inet_timeout(ErlDrvData e)
 	desc->inet.state = INET_STATE_LISTENING;
 	async_error_am(INETP(desc), am_timeout);
     }
-    DEBUGF(("tcp_inet_timeout(%p) }\r\n", desc->inet.port)); 
+
+    DDBG(INETP(desc),
+         ("INET-DRV-DBG[%d][" SOCKET_FSTR "] "
+          "%s -> done"
+          "\r\n",
+          __LINE__, sock, __FUNCTION__));
+
 }
 
 static int tcp_inet_multi_timeout(ErlDrvData e, ErlDrvTermData caller)
@@ -14301,8 +14427,9 @@ static ErlDrvSSizeT packet_inet_ctl(ErlDrvData e, unsigned int cmd, char* buf,
     ErlDrvSSizeT replen;
     udp_descriptor * udesc = (udp_descriptor *) e;
     inet_descriptor* desc  = INETP(udesc);
-    int type = SOCK_DGRAM;
     int af = AF_INET;
+    int type = SOCK_DGRAM;
+    int protocol;
 
     cmd -= ERTS_INET_DRV_CONTROL_MAGIC_NUMBER;
 
@@ -14311,7 +14438,7 @@ static ErlDrvSSizeT packet_inet_ctl(ErlDrvData e, unsigned int cmd, char* buf,
 	DDBG(desc,
 	     ("INET-DRV-DBG[%d][%T] packet_inet_ctl -> OPEN\r\n",
 	      __LINE__, driver_caller(desc->port)) );
-	if (len != 2) {
+	if (len != 3) {
 	    return ctl_error(EINVAL, rbuf, rsize);
 	}
 
@@ -14337,7 +14464,15 @@ static ErlDrvSSizeT packet_inet_ctl(ErlDrvData e, unsigned int cmd, char* buf,
 	    return ctl_error(EINVAL, rbuf, rsize);
 	}
 
-	replen = inet_ctl_open(desc, af, type, rbuf, rsize);
+        switch(buf[2]) {
+        case INET_PROTO_DEFAULT: protocol = 0; break;
+        case INET_PROTO_UDP: protocol = IPPROTO_UDP; break;
+        case INET_PROTO_SCTP: protocol = IPPROTO_SCTP; break;
+        default:
+            return ctl_xerror(str_eprotonosupport, rbuf, rsize);
+        }
+
+	replen = inet_ctl_open(desc, af, type, protocol, rbuf, rsize);
 
 	if ((*rbuf)[0] != INET_REP_ERROR) {
 	    if (desc->active)

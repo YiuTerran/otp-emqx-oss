@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1999-2024. All Rights Reserved.
+%% Copyright Ericsson AB 1999-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -1245,7 +1245,8 @@ the User's Guide.
                           MacLength :: pos_integer().
 
 macN(Type, SubType, Key, Data, MacLength) ->
-    erlang:binary_part(mac(Type,SubType,Key,Data), 0, MacLength).
+    Mac = mac(Type, SubType, Key, Data),
+    erlang:binary_part(Mac, 0, min(MacLength, byte_size(Mac))).
 
 
 %%%----------------------------------------------------------------

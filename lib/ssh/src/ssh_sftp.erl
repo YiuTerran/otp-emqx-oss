@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2005-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2005-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -1415,12 +1415,11 @@ handle_ssh_msg({ssh_cm, _, {exit_signal, ChannelId, Signal, Error0, _}},
     State = reply_all(State0, {error, Error}),
     {stop, ChannelId,  State};
 
+handle_ssh_msg({ssh_cm, _, {exit_status, ChannelId, 0}}, State) ->
+    {stop, ChannelId, State};
+
 handle_ssh_msg({ssh_cm, _, {exit_status, ChannelId, Status}}, State0) ->
-    State = 
-        case State0 of
-            0 -> State0;
-            _ -> reply_all(State0, {error, {exit_status, Status}})
-        end,
+    State = reply_all(State0, {error, {exit_status, Status}}),
     {stop, ChannelId, State}.
 
 %%--------------------------------------------------------------------

@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1998-2025. All Rights Reserved.
+ * Copyright Ericsson AB 1998-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -1522,8 +1522,8 @@ static int db_member_hash(DbTable *tbl, Eterm key, Eterm *ret)
     erts_rwmtx_t* lck;
 
     hval = MAKE_HASH(key);
-    ix = hash_to_ix(tb, hval);
     lck = RLOCK_HASH(tb, hval);
+    ix = hash_to_ix(tb, hval);
     b1 = BUCKET(tb, ix);
 
     while(b1 != 0) {
@@ -3902,7 +3902,10 @@ db_lookup_dbterm_hash(Process *p, DbTable *tbl, Eterm key, Eterm obj,
         int arity = arityval(*objp);
         Eterm *htop, *hend;
 
-        ASSERT(arity >= tb->common.keypos);
+        if (arity < tb->common.keypos) {
+            WUNLOCK_HASH_LCK_CTR(lck_ctr);
+            return 0;
+        }
         htop = HAlloc(p, arity + 1);
         hend = htop + arity + 1;
         sys_memcpy(htop, objp, sizeof(Eterm) * (arity + 1));

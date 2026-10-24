@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2013-2024. All Rights Reserved.
+%% Copyright Ericsson AB 2013-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -33,8 +33,6 @@
          corresponding_dtls_version/1,
          cookie_secret/0,
          cookie_timeout/0]).
-
--define(COOKIE_BASE_TIMEOUT, 30000).
 
 -spec suites(ssl_record:ssl_version()) -> [ssl_cipher_format:cipher_suite()].
 
@@ -80,9 +78,9 @@ cookie_secret() ->
     crypto:strong_rand_bytes(32).
 
 cookie_timeout() ->
-    %% Cookie will live for two timeouts periods
-    round(rand:uniform() * ?COOKIE_BASE_TIMEOUT/2).
-
+    %% Minimum 10s, max 30s — ensures client always has time to respond
+    %% even on lossy networks with re-transmissions
+    10000 + rand:uniform(20000).
 
 corresponding_dtls_version(?TLS_1_1) ->
     ?DTLS_1_0;

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2007-2023. All Rights Reserved.
+%% Copyright Ericsson AB 2007-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -46,11 +46,13 @@
                   cipher_suite,
                   master_secret,
                   srp_username,
+                  max_frag_enum,
                   is_resumable,
                   time_stamp,
                   ecc,                   %% TLS 1.3 Group
                   sign_alg,              %% TLS 1.3 Signature Algorithm
-                  dh_public_value        %% TLS 1.3 DH Public Value from peer
+                  dh_public_value,       %% TLS 1.3 DH Public Value from peer
+                  sni                    %% SNI hostname
                  }).
 
 -define(EMPTY_ID, <<>>).
@@ -148,6 +150,8 @@
 -define(KEY_EXCHANGE_DHE_PSK, 3).
 -define(KEY_EXCHANGE_RSA_PSK, 4).
 -define(KEY_EXCHANGE_SRP, 5).
+
+-define(MIN_DH_PRIM_BYTE_SIZE, 256).
 
 -record(server_rsa_params, {
 	  rsa_modulus,  %%  opaque RSA_modulus<1..2^16-1>

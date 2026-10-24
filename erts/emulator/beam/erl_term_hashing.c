@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2022-2023. All Rights Reserved.
+ * Copyright Ericsson AB 2022-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -589,8 +589,8 @@ erts_iov_block_hash(Uint32 *hashp, Uint *sizep, ErtsIovBlockHashState *state)
     ErtsBlockHashHelperCtx *hctx = &state->hctx;
     SysIOVec *iov = state->iov;
     Uint vlen = state->vlen;
-    int vix = state->vix;
-    int ix = state->ix;
+    Uint vix = state->vix;
+    Uint ix = state->ix;
     Uint cix = 0;
     byte *final_bytes;
     Uint no_final_bytes;
@@ -600,7 +600,7 @@ erts_iov_block_hash(Uint32 *hashp, Uint *sizep, ErtsIovBlockHashState *state)
 
     do {
         Uint bsz, csz;
-        int left;
+        Uint left;
         byte *ptr;
 
         ASSERT((cix % BLOCK_HASH_BYTES_PER_ITER) == 0);

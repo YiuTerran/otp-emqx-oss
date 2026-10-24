@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 2005-2024. All Rights Reserved.
+%% Copyright Ericsson AB 2005-2025. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -42,6 +42,8 @@
 %%
 %% Description: Creates a list of cgi/esi environment variables and
 %% there values.
+%%
+%% Note: "PROXY" header/variable is skipped because of CVE-2016-1000107
 %%--------------------------------------------------------------------------
 create_env(ScriptType, ModData, ScriptElements) ->
     create_basic_elements(ScriptType, ModData) 
@@ -149,6 +151,8 @@ create_http_header_elements(ScriptType, [{Name, [Value | _] = Values } |
 create_http_header_elements(ScriptType, [{Name, Value} | Headers], Acc, OtherAcc) 
   when is_list(Value) ->
     try http_env_element(ScriptType, Name, Value) of
+        skipped ->
+            create_http_header_elements(ScriptType, Headers, Acc, OtherAcc);
         Element ->
             create_http_header_elements(ScriptType, Headers, [Element | Acc],
                                        OtherAcc)
@@ -158,9 +162,16 @@ create_http_header_elements(ScriptType, [{Name, Value} | Headers], Acc, OtherAcc
                                        [{Name, Value} | OtherAcc])
     end.
 
-http_env_element(cgi, VarName0, Value)  ->
-    VarName = re:replace(VarName0,"-","_", [{return,list}, global]),
-    {"HTTP_"++ http_util:to_upper(VarName), Value};
+http_env_element(cgi, VarName0, Value) ->
+  case http_util:to_upper(VarName0) of
+    "PROXY" ->
+      %% CVE-2016-1000107 – https://github.com/erlang/otp/issues/3392
+      skipped;
+    VarName1 ->
+      VarNameUpper = re:replace(VarName1, "-", "_", [{return, list}, global]),
+      {"HTTP_" ++ VarNameUpper, Value}
+  end;
+
 http_env_element(esi, VarName0, Value)  ->
     list_to_existing_atom(VarName0),
     VarName = re:replace(VarName0,"-","_", [{return,list}, global]),

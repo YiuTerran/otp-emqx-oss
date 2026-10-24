@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 2008-2023. All Rights Reserved.
+%% Copyright Ericsson AB 2008-2026. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -44,6 +44,8 @@
 -record(path_validation_state,
         {
          valid_policy_tree,
+         %% Monotonic count of nodes ever added to policy tree (never decremented by pruning).
+         policy_tree_node_count = 1 :: non_neg_integer(),
          user_initial_policy_set,
          explicit_policy,
          inhibit_any_policy,

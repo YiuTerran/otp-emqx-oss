@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  * 
- * Copyright Ericsson AB 2001-2020. All Rights Reserved.
+ * Copyright Ericsson AB 2001-2026. All Rights Reserved.
  * 
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -67,9 +67,13 @@ int x_fix_buff(ei_x_buff* x, int szneeded)
 {
     int sz = szneeded + ei_x_extra;
     if (sz > x->buffsz) {
-	sz += ei_x_extra;	/* to avoid reallocating each and every time */
-	x->buffsz = sz;
-	x->buff = ei_realloc(x->buff, sz);
+        char* newbuff;
+        sz += ei_x_extra;       /* to avoid reallocating each and every time */
+        newbuff = ei_realloc(x->buff, sz);
+        if (newbuff == NULL)
+            return 0;           /* leave x->buff and x->buffsz intact on failure */
+        x->buff = newbuff;
+        x->buffsz = sz;
     }
     return x->buff != NULL;
 }

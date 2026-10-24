@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2004-2021. All Rights Reserved.
+%% Copyright Ericsson AB 2004-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -291,7 +291,7 @@ chunk_max_bodysize(Config) when is_list(Config) ->
 			  ?HTTP_MAX_BODY_SIZE, ?HTTP_MAX_HEADER_SIZE),
     
     %% Too long body
-    {error,{body_too_big, {max, 10}}} = 
+    {error,{body_too_long, {max, 10}}} = 
 	 (catch http_chunk:decode(list_to_binary(ChunkedBody),
 				  10, ?HTTP_MAX_HEADER_SIZE)).
 

@@ -21,6 +21,62 @@ limitations under the License.
 
 This document describes the changes made to the Crypto application.
 
+## Crypto 5.5.3.5
+
+### Fixed Bugs and Malfunctions
+
+- Fixed type mismatch between `ErlNifUInt64` and `uint64_t` in crypto NIF that caused incompatible-pointer warnings on macOS arm64 when passing DH parameters to OpenSSL.
+
+  Own Id: OTP-20333 Aux Id: [GH-11511], [PR-11513]
+
+[GH-11511]: https://github.com/erlang/otp/issues/11511
+[PR-11513]: https://github.com/erlang/otp/pull/11513
+
+## Crypto 5.5.3.4
+
+### Fixed Bugs and Malfunctions
+
+- Fixed crash in `crypto:macN/5` when supplied `MacLength` was greater than length of what the underlying hash returned.
+
+  Own Id: OTP-20239 Aux Id: [PR-11239]
+
+- Fix cipher key buffer overread for `chacha20_poly1305`.
+
+  Own Id: OTP-20244 Aux Id: [PR-11337]
+
+[PR-11239]: https://github.com/erlang/otp/pull/11239
+[PR-11337]: https://github.com/erlang/otp/pull/11337
+
+## Crypto 5.5.3.3
+
+### Fixed Bugs and Malfunctions
+
+- `crypto:compute_key/4` for `eddh` and [`crypto:generate_key/2,3`](`crypto:generate_key/3`) for `eddh`/`eddsa` now raise an `error:{notsup, Info, Description}` exception instead of returning the atom `notsup` when the underlying cryptolib lacks support.
+
+  Own Id: OTP-20215 Aux Id: [PR-11302]
+
+[PR-11302]: https://github.com/erlang/otp/pull/11302
+
+## Crypto 5.5.3.2
+
+### Fixed Bugs and Malfunctions
+
+- Fixed bug that could cause runtime crash after ~2 billion calls to `crypto:mac_init` due to a double EVP_MAC_free.
+
+  Own Id: OTP-20041 Aux Id: [PR-10859]
+
+[PR-10859]: https://github.com/erlang/otp/pull/10859
+
+## Crypto 5.5.3.1
+
+### Fixed Bugs and Malfunctions
+
+- Fixed static linking of OpenSSL 3.5+ on Windows.
+
+  Own Id: OTP-19993 Aux Id: [PR-10732]
+
+[PR-10732]: https://github.com/erlang/otp/pull/10732
+
 ## Crypto 5.5.3
 
 ### Fixed Bugs and Malfunctions

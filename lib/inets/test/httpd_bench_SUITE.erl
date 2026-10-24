@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2012-2023. All Rights Reserved.
+%% Copyright Ericsson AB 2012-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -477,15 +477,20 @@ start_inets(Protocol, ConfHttpd, Config) ->
     Node = ?config(server_node, Config),
     Host = ?config(server_host, Config),    
     HTTPVersion = ?config(http_version, Config),    
-    Conf = [httpd, [{port,0},
-		    {http_version, HTTPVersion},
-		    {ipfamily, inet},
-		    {server_name, "inets_test"},
-		    {server_root, PrivDir}, 
-		    {document_root, DataDir},
-		    {keep_alive, ?config(keep_alive, Config)},
-		    {keep_alive_timeout, 360}
-		    | ConfHttpd]],
+
+    Conf0 = [{port,0},
+             {http_version, HTTPVersion},
+             {ipfamily, inet},
+             {server_name, "inets_test"},
+             {server_root, PrivDir},
+             {document_root, DataDir},
+             {keep_alive, ?config(keep_alive, Config)}
+             | ConfHttpd],
+
+    Conf = case ?config(keep_alive, Config) of
+               true -> [httpd, [{keep_alive_timeout, 360} | Conf0]];
+               false -> [httpd, Conf0]
+           end,
     {ok, Pid} = rpc:call(Node, inets, start, Conf),
     Port = proplists:get_value(port,  rpc:call(Node, httpd, info, [Pid])),
     F = fun(File) -> 

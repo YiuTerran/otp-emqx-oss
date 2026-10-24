@@ -1,7 +1,7 @@
 %
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2007-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2007-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -1125,7 +1125,7 @@ rsa_suites_encipher(Ciphers) ->
 %% Cert should be have DSS key (DSA)
 dss_keyed_suites(Ciphers) ->
     filter_kex(Ciphers, fun (dhe_dss) -> true;
-                            (spr_dss) -> true;
+                            (srp_dss) -> true;
                             (_) ->  false
                         end).
 

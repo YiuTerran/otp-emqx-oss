@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2007-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2007-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -242,7 +242,10 @@ process_early_data(ConnectionStates0, #{early_data:=EarlyData0} = ReadState0,
                     ReadState = ReadState0#{sequence_number => Seq + 1, early_data => EarlyData},
                     ConnectionStates = ConnectionStates0#{current_read => ReadState},
                     {Record#ssl_tls{early_data = true}, ConnectionStates}
-            end
+            end;
+        #ssl_tls{type = Type} ->
+            ?ALERT_REC(?FATAL, ?UNEXPECTED_MESSAGE,
+                       {unexpected_inner_type, Type})
     end.
 
 encode_plain_text(Type, Data, 0,
@@ -339,9 +342,21 @@ decode_inner_plaintext(PlainText) ->
               Type =:= ?APPLICATION_DATA orelse
               Type =:= ?HANDSHAKE orelse
               Type =:= ?ALERT ->
-            #ssl_tls{type = Type,
-                     version = ?TLS_1_3, %% Internally use real version
-                     fragment = Bin};
+            %% RFC 8446 Section 5.4: the content of TLSInnerPlaintext (after
+            %% removing padding and the content-type octet) MUST NOT exceed
+            %% 2^14 octets; a receiver MUST abort with a record_overflow alert
+            %% otherwise. The ciphertext length is already bounded on the record
+            %% layer, but a conformant-sized ciphertext can still decrypt to an
+            %% oversized plaintext once padding is stripped.
+            case byte_size(Bin) > ?MAX_PLAIN_TEXT_LENGTH of
+                true ->
+                    ?ALERT_REC(?FATAL, ?RECORD_OVERFLOW,
+                               {plain_text_too_long, byte_size(Bin)});
+                false ->
+                    #ssl_tls{type = Type,
+                             version = ?TLS_1_3, %% Internally use real version
+                             fragment = Bin}
+            end;
         _Else ->
             ?ALERT_REC(?FATAL, ?UNEXPECTED_MESSAGE, empty_alert)
     end.
@@ -351,14 +366,22 @@ pending_early_data_size(PendingMaxEarlyDataSize, PlainFragment) ->
     %% send when using this ticket, in bytes.  Only Application Data
     %% payload (i.e., plaintext but not padding or the inner content
     %% type byte) is counted.
-    PendingMaxEarlyDataSize - (byte_size(PlainFragment)).
+    %%
+    %% Charge at least 1 byte per accepted record so the budget always
+    %% depletes, even for empty (0-length) application-data records;
+    %% otherwise a client could stream unbounded empty 0-RTT records
+    %% without ever reaching max_early_data_size. This mirrors the floor
+    %% used by approximate_pending_early_data_size/3 on the trial path.
+    PendingMaxEarlyDataSize - max(1, byte_size(PlainFragment)).
 
 approximate_pending_early_data_size(PendingMaxEarlyDataSize,
                                     BulkCipherAlgo, CipherFragment) ->
-    %% We can not know how much is padding!
+    %% We cannot know the exact plaintext size (padding is unknown),
+    %% but every record must cost at least 1 byte of budget to
+    %% guarantee the budget eventually depletes.
     InnerContTypeLen = 1,
-    PendingMaxEarlyDataSize - (byte_size(CipherFragment) -
-                                   InnerContTypeLen - bca_tag_len(BulkCipherAlgo)).
+    PendingMaxEarlyDataSize - max(1, byte_size(CipherFragment) -
+                                      InnerContTypeLen - bca_tag_len(BulkCipherAlgo)).
 
 bca_tag_len(?AES_CCM_8) ->
     8;

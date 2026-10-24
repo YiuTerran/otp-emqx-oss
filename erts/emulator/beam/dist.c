@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1996-2024. All Rights Reserved.
+ * Copyright Ericsson AB 1996-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -1024,7 +1024,8 @@ int erts_do_net_exits(DistEntry *dep, Eterm reason)
             ERTS_LC_ASSERT(erts_lc_is_port_locked(erts_port_lookup_raw(dep->cid)));
 
             if (erts_port_task_is_scheduled(&dep->dist_cmd))
-                erts_port_task_abort(&dep->dist_cmd);
+                erts_port_task_abort(erts_port_lookup_raw(dep->cid),
+                                     &dep->dist_cmd);
         }
         else {
             ASSERT(is_internal_pid(dep->cid));

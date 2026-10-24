@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2018-2024. All Rights Reserved.
+%% Copyright Ericsson AB 2018-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -221,8 +221,8 @@ dbg_authentication(Config) ->
     {ok,[authentication]} = ssh_dbg:on([authentication]),
     
     Parent = self(),
-    {Pid, Host, Port} = ssh_test_lib:daemon([{system_dir, system_dir(Config)},
-					     {user_dir, user_dir(Config)},
+    {Pid, Host, Port} = ssh_test_lib:daemon([{system_dir, ssh_test_lib:system_dir(Config)},
+					     {user_dir, ssh_test_lib:user_dir(Config)},
                                              {user_passwords, [{?USR,?PWD}]},
                                              {connectfun, fun(_,_,_) ->
                                                                   Parent ! {daemon_c,Ref,self()}
@@ -231,7 +231,7 @@ dbg_authentication(Config) ->
     
     %% ---- Check password ----
     Cpwd = ssh_test_lib:connect(Host, Port, [{silently_accept_hosts, true},
-                                             {user_dir, user_dir(Config)},
+                                             {user_dir, ssh_test_lib:user_dir(Config)},
                                              {user,?USR},
                                              {password,?PWD},
                                              {auth_methods,"password"},
@@ -250,7 +250,7 @@ dbg_authentication(Config) ->
 
     %% ---- Check keyboard-interactive ----
     Ckbi = ssh_test_lib:connect(Host, Port, [{silently_accept_hosts, true},
-                                             {user_dir, user_dir(Config)},
+                                             {user_dir, ssh_test_lib:user_dir(Config)},
                                              {user,?USR},
                                              {password,?PWD},
                                              {auth_methods,"keyboard-interactive"},
@@ -269,7 +269,7 @@ dbg_authentication(Config) ->
 
     %% ---- Check publickey ----
     Cpkey = ssh_test_lib:connect(Host, Port, [{silently_accept_hosts, true},
-                                             {user_dir, user_dir(Config)},
+                                             {user_dir, ssh_test_lib:user_dir(Config)},
                                              {auth_methods,"publickey"},
                                              {user_interaction, false}]),
     Cpkey_d = daemon_connection_ref(Ref, Cpkey),
@@ -556,10 +556,6 @@ setup_dirs(Config) ->
     ct:log("Pub keys setup for: ~p",
            [ssh_test_lib:setup_all_user_host_keys(Config)]),
     Config.
-
-system_dir(Config) -> filename:join(proplists:get_value(priv_dir, Config), system).
-
-user_dir(Config) -> proplists:get_value(priv_dir, Config).
 
 %%--------------------------------------------------------------------
 queued_msgs(Ref, Conns) ->

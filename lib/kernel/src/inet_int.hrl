@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 1997-2024. All Rights Reserved.
+%% Copyright Ericsson AB 1997-2025. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -38,6 +38,13 @@
 -define(INET_TYPE_STREAM,     1).
 -define(INET_TYPE_DGRAM,      2).
 -define(INET_TYPE_SEQPACKET,  3).
+
+%% protocols
+-define(INET_PROTO_DEFAULT,   0).
+-define(INET_PROTO_TCP,       1).
+-define(INET_PROTO_UDP,       2).
+-define(INET_PROTO_SCTP,      3).
+-define(INET_PROTO_MPTCP,     4).
 
 %% socket modes, INET_LOPT_MODE
 -define(INET_MODE_LIST,	      0).
@@ -414,22 +421,24 @@
 %% deliver = term
 %% active  = false
 %%
--record(connect_opts, 
-	{ 
+-record(connect_opts,
+	{
 	  ifaddr,           %% don't bind explicitly, let connect decide
 	  port   = 0,       %% bind to port (default is dynamic port)
 	  fd     = -1,      %% fd >= 0 => already bound
-	  opts   = []       %% [{active,true}] added in inet:connect_options
+	  opts   = [],      %% [{active,true}] added in inet:connect_options
+          protocol = undefined
 	 }).
 
--record(listen_opts, 
-	{ 
+-record(listen_opts,
+	{
 	  ifaddr,                    %% interpreted as 'any' in *_tcp.erl
 	  port   = 0,                %% bind to port (default is dynamic port)
 	  backlog = ?LISTEN_BACKLOG, %% backlog
 	  fd      = -1,              %% %% fd >= 0 => already bound
-	  opts   = []                %% [{active,true}] added in 
+	  opts   = [],               %% [{active,true}] added in
 	                             %% inet:listen_options
+          protocol = undefined
 	 }).
 
 -record(udp_opts,

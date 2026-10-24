@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2019-2024. All Rights Reserved.
+%% Copyright Ericsson AB 2019-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -467,15 +467,12 @@ types(erlang, 'rem', Args) ->
 %% Some mixed-type arithmetic.
 types(erlang, Op, [LHS, RHS]) when Op =:= '+'; Op =:= '-' ->
     case get_range(LHS, RHS, #t_number{}) of
-        {Type, {A,B}, {C,_D}} when is_integer(C), C >= 0 ->
+        {Type, {A,B}, {C,_D}} when Op =:= '+',
+                                   is_integer(A), A >= 0,
+                                   is_integer(C), C >= 0 ->
+            %% The ranges have the same sign (positive). Will converge
+            %% to an upper limit of positive infinity.
             R = beam_bounds:bounds(Op, {A,B}, {C,'+inf'}),
-            RetType = case Type of
-                          integer -> #t_integer{elements=R};
-                          number -> #t_number{elements=R}
-                      end,
-            sub_unsafe(RetType, [#t_number{}, #t_number{}]);
-        {Type, {A,_B}, {C,D}} when Op =:= '+', is_integer(A), A >= 0 ->
-            R = beam_bounds:bounds(Op, {A,'+inf'}, {C,D}),
             RetType = case Type of
                           integer -> #t_integer{elements=R};
                           number -> #t_number{elements=R}
@@ -1031,10 +1028,8 @@ types(maps, from_list, [Pairs]) ->
                       SKey = beam_types:get_tuple_element(1, Es),
                       SValue = beam_types:get_tuple_element(2, Es),
                       #t_map{super_key=SKey,super_value=SValue};
-                  none when PairType =:= none ->
-                      #t_map{super_key=none,super_value=none};
-                  none when PairType =/= none ->
-                      none
+                  none ->
+                      #t_map{super_key=none,super_value=none}
               end,
     sub_unsafe(RetType, [proper_list()]);
 types(maps, get, [_Key, _Map]=Args) ->
@@ -1292,18 +1287,22 @@ lists_map_type_1(_, ElementType) ->
 
 lists_mapfold_type(Fun, Init, List) ->
     case {meet(Fun, #t_fun{type=#t_tuple{size=2}}), meet(List, #t_list{})} of
-        {_, nil} ->
-            make_two_tuple(nil, Init);
-        {#t_fun{type=#t_tuple{elements=Es}}, ListType} ->
+        {#t_fun{type=T}, ListType} when T =/= none ->
+            #t_tuple{elements=Es} = normalize(T),
             ElementType = beam_types:get_tuple_element(1, Es),
             AccType = beam_types:get_tuple_element(2, Es),
             lists_mapfold_type_1(ListType, ElementType, Init, AccType);
-        {#t_fun{type=none}, #t_list{}} ->
-            %% The fun never returns, so the only way we could return normally
-            %% is if the list is empty, in which case we'll return [] and the
-            %% initial value.
+        {_, #t_list{}} ->
+            %% The fun never returns, or is not a fun. The only way this can
+            %% succeed is if the given list is empty, in which case we'll
+            %% return [] and the initial value.
             make_two_tuple(nil, Init);
-        _ ->
+        {_, nil} ->
+            make_two_tuple(nil, Init);
+        {_, _} ->
+            %% The fun never returns, or is not a fun, and the list is either
+            %% not a list or is guaranteed not to be empty. This will never
+            %% return.
             none
     end.
 

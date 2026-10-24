@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 2004-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2004-2026. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -327,6 +327,7 @@ trim(_) ->
     ?TEST(["..h", ".e", <<"j..">>], [both, ". "], "h.ej"),
     ?TEST(["..h", <<".ejsa"/utf8>>, "n.."], [both, ". "], "h.ejsan"),
     %% Test that it behaves with graphemes (i.e. nfd tests are the hard part)
+    ?TEST([<<"\r \r">>, []], [trailing, [$\r, [$\r, $\n]]], "\r "),
     ?TEST([1013,101,778,101,101], [trailing, [101]], [1013,101,778]),
     ?TEST("aaåaa", [both, "a"], "å"),
     ?TEST(["aaa",778,"äöoo"], [both, "ao"], "åäö"),

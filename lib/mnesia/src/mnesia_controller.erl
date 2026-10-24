@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1996-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -1072,7 +1072,7 @@ handle_cast({force_load_updated, Tab}, State) ->
 handle_cast({master_nodes_updated, Tab, Masters}, State) ->
     Active = val({Tab, active_replicas}),
     Valid =
-	case val({Tab, load_by_force}) of
+        case ?catch_val({Tab, load_by_force}) of
 	    true ->
 		Active;
 	    false ->
@@ -1081,7 +1081,9 @@ handle_cast({master_nodes_updated, Tab, Masters}, State) ->
 			Active;
 		    true ->
 			mnesia_lib:intersect(Masters, Active)
-		end
+                end;
+            _ ->
+                []
 	end,
     case Valid of
 	[] ->
@@ -1179,71 +1181,75 @@ handle_info(#dumper_done{worker_pid=Pid, worker_res=Res}, State) ->
 	    {stop, fatal, State}
     end;
 
-handle_info(Done = #loader_done{worker_pid=WPid, table_name=Tab}, State0) ->
+handle_info(Done = #loader_done{worker_pid=WPid, table_name=Tab, reply=Reply}, State0) ->
     LateQueue0 = State0#state.late_loader_queue,
-    State1 = State0#state{loader_pid = lists:keydelete(WPid,1,get_loaders(State0))},
+    {value, {WPid, Worker}, Loaders} = lists:keytake(WPid, 1, get_loaders(State0)),
+    State1 = State0#state{loader_pid = Loaders},
 
     State2 =
-	case Done#loader_done.is_loaded of
-	    true ->
-		%% Optional table announcement
-		if
-		    Done#loader_done.needs_announce == true,
-		    Done#loader_done.needs_reply == true ->
-			i_have_tab(Tab),
-			%% Should be {dumper,{add_table_copy, _}} only
-			reply(Done#loader_done.reply_to,
-			      Done#loader_done.reply);
-		    Done#loader_done.needs_reply == true ->
-			%% Should be {dumper,{add_table_copy,_}} only
-			reply(Done#loader_done.reply_to,
-			      Done#loader_done.reply);
-		    Done#loader_done.needs_announce == true, Tab == schema ->
-			i_have_tab(Tab);
-		    Done#loader_done.needs_announce == true ->
-			i_have_tab(Tab),
-			%% Local node needs to perform user_sync_tab/1
-			Ns = val({current, db_nodes}),
-			abcast(Ns, {i_have_tab, Tab, node()});
-		    Tab == schema ->
-			ignore;
-		    true ->
-			%% Local node needs to perform user_sync_tab/1
-			Ns = val({current, db_nodes}),
-			AlreadyKnows = val({Tab, active_replicas}),
-			abcast(Ns -- AlreadyKnows, {i_have_tab, Tab, node()})
-		end,
-		%% Optional user sync
-		case Done#loader_done.needs_sync of
-		    true -> user_sync_tab(Tab);
-		    false -> ignore
-		end,
-		State1#state{late_loader_queue=gb_trees:delete_any(Tab, LateQueue0)};
-	    false ->
-		%% Either the node went down or table was not
-		%% loaded remotly yet
-		case Done#loader_done.needs_reply of
-		    true ->
-			reply(Done#loader_done.reply_to,
-			      Done#loader_done.reply);
-		    false ->
-			ignore
-		end,
+        case Done#loader_done.is_loaded of
+            true ->
+                %% Optional table announcement
+                if
+                    Done#loader_done.needs_announce == true,
+                    Done#loader_done.needs_reply == true ->
+                        i_have_tab(Tab),
+                        %% Should be {dumper,{add_table_copy, _}} only
+                        reply(Done#loader_done.reply_to, Reply);
+                    Done#loader_done.needs_reply == true ->
+                        %% Should be {dumper,{add_table_copy,_}} only
+                        reply(Done#loader_done.reply_to, Reply);
+                    Done#loader_done.needs_announce == true, Tab == schema ->
+                        i_have_tab(Tab);
+                    Done#loader_done.needs_announce == true ->
+                        i_have_tab(Tab),
+                        %% Local node needs to perform user_sync_tab/1
+                        Ns = val({current, db_nodes}),
+                        abcast(Ns, {i_have_tab, Tab, node()});
+                    Tab == schema ->
+                        ignore;
+                    true ->
+                        %% Local node needs to perform user_sync_tab/1
+                        Ns = val({current, db_nodes}),
+                        AlreadyKnows = val({Tab, active_replicas}),
+                        abcast(Ns -- AlreadyKnows, {i_have_tab, Tab, node()})
+                end,
+                %% Optional user sync
+                case Done#loader_done.needs_sync of
+                    true -> user_sync_tab(Tab);
+                    false -> ignore
+                end,
+                State1#state{late_loader_queue=gb_trees:delete_any(Tab, LateQueue0)};
+            false ->
+                %% Either the node went down or table was not
+                %% loaded remotly yet
+                case Done#loader_done.needs_reply of
+                    true ->
+                        reply(Done#loader_done.reply_to, Reply);
+                    false ->
+                        ignore
+                end,
 
-                case {?catch_val({Tab, storage_type}), val({Tab, active_replicas})} of
-                    {unknown, _} -> %% Should not have a local copy anymore
+                case {?catch_val({Tab, storage_type}), val({Tab, active_replicas}), ?catch_val({Tab, load_by_force})} of
+                    {unknown, _, _} -> %% Should not have a local copy anymore
                         State1#state{late_loader_queue=gb_trees:delete_any(Tab, LateQueue0)};
-		    {_, [_|_]} -> % still available elsewhere
-			{value,{_,Worker}} = lists:keysearch(WPid,1,get_loaders(State0)),
-			add_loader(Tab,Worker,State1);
-                    {ram_copies, []} ->
-			DelState = State1#state{late_loader_queue=gb_trees:delete_any(Tab, LateQueue0)},
+                    {_, [_|_], _} -> % still available elsewhere
+                        add_loader(Tab,Worker,State1);
+                    {ram_copies, [], _} ->
+                        DelState = State1#state{late_loader_queue=gb_trees:delete_any(Tab, LateQueue0)},
                         cast({disc_load, Tab, ram_only}),
                         DelState;
-                    {_, []} ->  %% Table deleted or not loaded anywhere
+                    {_, [], true} when is_record(Worker, net_load), Reply =:= {not_loaded, none_active} ->
+                        %% Network load could have been aborted by Sender node going down,
+                        %% if user has forced the load, we retry loading from disc
+                        DelState = State1#state{late_loader_queue=gb_trees:delete_any(Tab, LateQueue0)},
+                        cast({disc_load, Tab, forced_by_user}),
+                        DelState;
+                    {_, [], _} ->
+                        %% Table deleted or not loaded anywhere
                         State1#state{late_loader_queue=gb_trees:delete_any(Tab, LateQueue0)}
-		end
-	end,
+                end
+        end,
     State3 = opt_start_worker(State2),
     noreply(State3);
 
@@ -1830,6 +1836,7 @@ update_where_to_wlock(Tab) ->
 %% This code is rpc:call'ed from the tab_copier process
 %% when it has *not* released it's table lock
 unannounce_add_table_copy(Tab, To) ->
+    verbose("unannounce_add_table_copy ~w ~w~n", [Tab,To]),
     ?CATCH(del_active_replica(Tab, To)),
     try To = val({Tab , where_to_read}),
 	 mnesia_lib:set_remote_where_to_read(Tab)

@@ -1,7 +1,7 @@
 <!--
 %CopyrightBegin%
 
-Copyright Ericsson AB 2023-2024. All Rights Reserved.
+Copyright Ericsson AB 2023-2025. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -541,13 +541,13 @@ behavior of earlier flags.
   [time warp mode](time_correction.md#time-warp-modes):
 
   - **`no_time_warp`** -
-    [No time warp mode](time_correction.md#no-time-warp-mode) (the default)
+    [No time warp mode](time_correction.md#no-time-warp-mode)
 
   - **`single_time_warp`** -
     [Single time warp mode](time_correction.md#single-time-warp-mode)
 
   - **`multi_time_warp`** -
-    [Multi-time warp mode](time_correction.md#multi-time-warp-mode)
+    [Multi-time warp mode](time_correction.md#multi-time-warp-mode) (the default since Erlang/OTP 26.0)
 
 - **`+d`** - If the emulator detects an internal error (or runs out of memory),
   it, by default, generates both a crash dump and a core dump. The core dump is,

@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2020-2024. All Rights Reserved.
+ * Copyright Ericsson AB 2020-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -320,7 +320,7 @@ void BeamModuleAssembler::emit_bif_and(const ArgLabel &Fail,
         a.b_eq(next);
         mov_var(XREG0, src1);
         mov_var(XREG1, src2);
-        fragment_call(ga->get_handle_or_error());
+        fragment_call(ga->get_handle_and_error());
     }
 
     a.bind(next);

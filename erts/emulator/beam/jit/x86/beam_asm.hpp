@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2020-2024. All Rights Reserved.
+ * Copyright Ericsson AB 2020-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -57,6 +57,8 @@ struct BeamAssembler : public BeamAssemblerCommon {
     BeamAssembler() : BeamAssemblerCommon(a) {
         Error err = code.attach(&a);
         ERTS_ASSERT(!err && "Failed to attach codeHolder");
+
+        lateInit();
     }
 
     BeamAssembler(const std::string &log) : BeamAssembler() {

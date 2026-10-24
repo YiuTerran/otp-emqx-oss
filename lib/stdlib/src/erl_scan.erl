@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1996-2024. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -1224,7 +1224,7 @@ scan_tqstring_lines(Cs0, Tqs, Line, Col, Str, Qn, ContentR, Acc) ->
                 C =:= $\\, not Tqs#tqs.verbatim ->
                     case scan_escape(Cs, Col) of
                         more ->
-                            {more,Cs,Line,Col,Str,Qn,ContentR,Acc};
+                            {more,Cs0,Line,Col,Str,Qn,ContentR,Acc};
                         {error,Ncs,Error,Ncol} ->
                             {error,Ncs,Line,Ncol,Line,Ncol+1,Error};
                         {eof,Ncol} ->

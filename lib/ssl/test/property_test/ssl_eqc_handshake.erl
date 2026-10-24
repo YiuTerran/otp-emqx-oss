@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2018-2023. All Rights Reserved.
+%% Copyright Ericsson AB 2018-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -66,20 +66,36 @@
 %%--------------------------------------------------------------------
 
 prop_tls_hs_encode_decode() ->
-    ?FORALL({Handshake, TLSVersion}, ?LET(Version, tls_version(), {tls_msg(Version), Version}),
-            try 
+     ?FORALL({Handshake, TLSVersion}, ?LET(Version, tls_version(), {tls_msg(Version), Version}),
+            begin
                 [Type, _Length, Data] = tls_handshake:encode_handshake(Handshake, TLSVersion),
-                case tls_handshake:decode_handshake(TLSVersion, Type, Data) of
-                    Handshake ->
-                        true;
-                    _ ->
-                        false
-                end
-            catch
-                throw:#alert{} ->
-                    true
+                DecHandshake = tls_handshake:decode_handshake(TLSVersion, Type, Data),
+                RawHandshake = raw_handshake(DecHandshake),
+                equals(RawHandshake,Handshake)
             end
 	   ).
+
+raw_handshake(#client_hello{extensions = Exts} = Hello)->
+    NewExts = raw_ext_client(Exts),
+    Hello#client_hello{extensions = NewExts};
+raw_handshake(Handshake) ->
+    Handshake.
+
+%% binder_length is saved in decode because we need it later to
+%% truncates client hello in handshake history, but it is not defined
+%% as part of the handshake record but calculated at TLS record
+%% layer. So we want to "unset" it for being able to have a simple
+%% property for encoding/decoding testing. Same goes for hybrid
+%% key_exchange where the decode functions splits the key-share into
+%% the two individual key-share values to use.
+raw_ext_client(Exts0) ->
+    case maps:get(pre_shared_key, Exts0, undefined) of
+        #pre_shared_key_client_hello{} = PSKCH ->
+            NewPSKCH = PSKCH#pre_shared_key_client_hello{binder_length = undefined},
+            Exts0#{pre_shared_key => NewPSKCH};
+        _  ->
+            Exts0
+    end.
 
 %%--------------------------------------------------------------------
 %% Message Generators  -----------------------------------------------
@@ -474,7 +490,24 @@ extensions(?TLS_1_3 = Version, encrypted_extensions) ->
 server_name() ->
   ?LET(ServerName, sni(),
        ServerName).
-    %% sni().
+
+max_fragment_length() ->
+    ?LET(Enum, elements([1,2,3,4]), #max_frag_enum{enum = Enum}).
+
+status_request(client_hello) ->
+    undefined; %% Should extend this as part of OCSP enhancement
+status_request(server_hello) ->
+    "".
+
+early_data_indication() ->
+    %% In ClientHello and EncryptedExtensions the early_data extension is
+    %% empty (RFC 8446/9846 4.2.10). The max_early_data_size form
+    %% (#early_data_indication_nst{}) is only valid in NewSessionTicket.
+    #early_data_indication{}.
+
+cookie() ->
+    %% Can be bigger, but value is not important here.
+    #cookie{cookie = rand:bytes(20)}.
 
 signature_algs_cert() ->
     ?LET(List,  sig_scheme_list(),
@@ -623,9 +656,12 @@ cert_auths() ->
     certificate_authorities(?TLS_1_3).
 
 certificate_request_1_3() ->
-    #certificate_request_1_3{certificate_request_context = <<>>,
-                             extensions = #{certificate_authorities => certificate_authorities(?TLS_1_3)}
-                            }.
+    ?LET(Algs, signature_algs_cert(),
+         #certificate_request_1_3{certificate_request_context = <<>>,
+                                  extensions = #{certificate_authorities =>
+                                                     certificate_authorities(?TLS_1_3),
+                                                 signature_algs_cert =>
+                                                     Algs}}).
 certificate_request(Version) ->
     #certificate_request{certificate_types = certificate_types(Version),
 			 hashsign_algorithms = hashsign_algorithms(Version),

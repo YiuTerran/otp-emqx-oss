@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2007-2024. All Rights Reserved.
+%% Copyright Ericsson AB 2007-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -28,6 +28,7 @@
 -include_lib("public_key/include/public_key.hrl"). 
 
 -define(DEFAULT_MAX_SESSION_CACHE, 1000).
+-define(DEFAULT_MAX_CRL_CACHE_SIZE, 100000).
 
 -export([init/2,
          pre_1_3_session_opts/1,
@@ -36,7 +37,8 @@
          get_ticket_store_size/0,
          get_internal_active_n/0,
          get_internal_active_n/1,
-         new_emulated/2
+         new_emulated/2,
+         get_max_crl_cache_size/0
         ]).
 
 %%====================================================================
@@ -138,17 +140,17 @@ using_curve(Curve, [_ | Rest], Acc) ->
     using_curve(Curve, Rest, Acc).
 
 prio_rsa_pss(RSAPSS) ->
-       Order = fun(#{privat_key := {#'RSAPrivateKey'{modulus = N}, Params1}},
-                   #{private_key := {#'RSAPrivateKey'{modulus = N}, Params2}}) ->
-                       prio_params_1(Params1, Params2);
-                  (#{private_key := {#'RSAPrivateKey'{modulus = N}, _}},
-                   #{private_key := {#'RSAPrivateKey'{modulus = M}, _}}) when M > N ->
-                       true;
-                  (#{private_key := #{engine := _}}, _) ->
-                       true;
-                  (_,_) ->
-                       false
-               end,
+    Order = fun(#{private_key := {#'RSAPrivateKey'{modulus = N}, Params1}},
+                #{private_key := {#'RSAPrivateKey'{modulus = N}, Params2}}) ->
+                    prio_params_1(Params1, Params2);
+               (#{private_key := {#'RSAPrivateKey'{modulus = N}, _}},
+                #{private_key := {#'RSAPrivateKey'{modulus = M}, _}}) when M > N ->
+                    true;
+               (#{private_key := #{engine := _}}, _) ->
+                    true;
+               (_,_) ->
+                    false
+            end,
     lists:sort(Order, RSAPSS).
 
 prio_params_1(#'RSASSA-PSS-params'{hashAlgorithm = #'HashAlgorithm'{algorithm = Oid1}},
@@ -156,8 +158,8 @@ prio_params_1(#'RSASSA-PSS-params'{hashAlgorithm = #'HashAlgorithm'{algorithm = 
     public_key:pkix_hash_type(Oid1) > public_key:pkix_hash_type(Oid2).
 
 prio_rsa(RSA) ->
-    Order = fun(#{key := #'RSAPrivateKey'{modulus = N}},
-                #{key := #'RSAPrivateKey'{modulus = M}}) when M > N ->
+    Order = fun(#{private_key := #'RSAPrivateKey'{modulus = N}},
+                #{private_key := #'RSAPrivateKey'{modulus = M}}) when M > N ->
                     true;
                (#{private_key := #{engine := _}}, _) ->
                     true;
@@ -167,8 +169,8 @@ prio_rsa(RSA) ->
     lists:sort(Order, RSA).
 
 prio_dsa(DSA) ->
-    Order = fun(#{key := #'DSAPrivateKey'{q = N}},
-                #{key := #'DSAPrivateKey'{q = M}}) when M > N ->
+    Order = fun(#{private_key := #'DSAPrivateKey'{q = N}},
+                #{private_key := #'DSAPrivateKey'{q = M}}) when M > N ->
                     true;
                (#{private_key := #{engine := _}}, _) ->
                     true;
@@ -235,6 +237,14 @@ new_emulated([], EmOpts) ->
     EmOpts;
 new_emulated(NewEmOpts, _) ->
     NewEmOpts.
+
+get_max_crl_cache_size() ->
+      case application:get_env(ssl, crl_cache_max_size) of
+        {ok, N} when is_integer(N) ->
+            N;
+         _  ->
+            ?DEFAULT_MAX_CRL_CACHE_SIZE
+    end.
 
 %%====================================================================
 %% Internal functions 
@@ -370,7 +380,7 @@ dh_file(DbHandle, DHParamFile) ->
         end
     catch
         _:Reason ->
-            file_error(DHParamFile, {dhfile, Reason}) 
+            file_error(DHParamFile, {dhfile, Reason})
     end.
 
 session_cb_init_args(client) ->
@@ -422,14 +432,14 @@ max_session_cache_size(server) ->
     end.
 
 session_cb_opts(client = Role)->
-    case application:get_env(ssl, session_cb, ssl_client_session_cache_db) of
+    case application:get_env(ssl, client_session_cb, ssl_client_session_cache_db) of
         ssl_client_session_cache_db = ClientCb ->
             {ClientCb, []};
         ClientCb ->
             {ClientCb, session_cb_init_args(Role)}
     end;
 session_cb_opts(server = Role) ->
-    case application:get_env(ssl, session_cb, ssl_server_session_cache_db) of
+    case application:get_env(ssl, server_session_cb, ssl_server_session_cache_db) of
         ssl_server_session_cache_db = ServerCb ->
             {ServerCb, []};
         ServerCb ->

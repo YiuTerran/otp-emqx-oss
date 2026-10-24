@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1997-2024. All Rights Reserved.
+%% Copyright Ericsson AB 1997-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -23,9 +23,10 @@
 
 %% Application internal API
 -export([load_mime_types/1, store/1, store/2,
-	 remove/1, remove_all/1, get_config/3, get_config/4,
-	 lookup_socket_type/1, 
-	 lookup/2, lookup/3, lookup/4, 
+         remove/1, remove_all/1, get_config/3, get_config/4,
+         validate_config/1,
+         lookup_socket_type/1,
+         lookup/2, lookup/3, lookup/4,
 	 validate_properties/1, white_space_clean/1]).
 
 -define(VMODULE,"CONF").
@@ -100,9 +101,22 @@ validate_properties(RawProperties) ->
 
 %% This function is used to validate inter-property dependencies.
 %% That is, if property A depends on property B.
-%% The only sunch preperty at this time is bind_address that depends 
-%% on ipfamily.
+%% The only such preperties at this time are:
+%%  - bind_address that depends on ipfamily
+%%  - keep_alive_timeout that depends on keep_alive
 validate_properties2(Properties0) ->
+    case proplists:get_value(keep_alive, Properties0) of
+        undefined -> ok; %% defaults to true
+        true -> ok;
+        false ->
+            KeepaliveTimeout = proplists:get_value(keep_alive_timeout, Properties0),
+            case KeepaliveTimeout of
+                infinity -> ok; %%% timeout disabled
+                undefined -> ok;
+                _ ->
+                    throw({error, invalid_keep_alive_timeout})
+            end
+    end,
     Properties = fix_ipfamily(Properties0),
     case proplists:get_value(bind_address, Properties) of
 	undefined ->
@@ -188,6 +202,13 @@ validate_config_params([{max_body_size, Value} | Rest])
 validate_config_params([{max_body_size, Value} | _]) -> 
     throw({max_body_size, Value});
 
+validate_config_params([{request_timeout, Value} | Rest])
+  when (is_integer(Value) andalso (Value > 0));
+       Value =:= infinity ->
+    validate_config_params(Rest);
+validate_config_params([{request_timeout, Value} | _]) ->
+    throw({request_timeout, Value});
+
 validate_config_params([{max_content_length, Value} | Rest]) 
   when is_integer(Value) andalso (Value > 0) ->
     validate_config_params(Rest);
@@ -261,7 +282,8 @@ validate_config_params([{max_keep_alive_request, Value} | _]) ->
     throw({max_keep_alive_request, Value});
 
 validate_config_params([{keep_alive_timeout, Value} | Rest]) 
-  when is_integer(Value) andalso (Value >= 0) ->
+  when (is_integer(Value) andalso (Value >= 0));
+       Value =:= infinity ->
     validate_config_params(Rest);
 validate_config_params([{keep_alive_timeout, Value} | _]) ->
     throw({keep_alive_timeout, Value});
@@ -341,7 +363,14 @@ is_bind_address(Value, IpFamily) ->
 	_ ->
 	    false
     end.
- 
+
+validate_config(ConfigList) ->
+    try validate_config_params(ConfigList) of
+        ok -> ok
+    catch
+        throw:Error -> {error, {invalid_option, Error}}
+    end.
+
 store(ConfigList0) -> 
     try validate_config_params(ConfigList0) of
 	ok ->
@@ -474,7 +503,9 @@ remove_all(ConfigDB) ->
     remove_traverse(ConfigDB, lists:append(Modules,[?MODULE])).
 
 remove(ConfigDB) ->
-    ets:delete(ConfigDB),
+    try ets:delete(ConfigDB)
+    catch _:_ -> ok
+    end,
     ok.
 
 -spec get_config(Address, Port, Profile) -> [tuple()] when
