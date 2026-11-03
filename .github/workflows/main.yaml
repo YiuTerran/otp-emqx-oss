@@ -153,7 +153,7 @@ jobs:
             fi
       - name: Restore from cache
         env:
-            NO_CACHE: ${{ fromJson(steps.cache.outputs.no-cache) || fromJson(steps.issue_comment.outputs.DISABLE_CACHE) || fromJson(steps.cache.outputs.deleted_count) > 20 }}
+            NO_CACHE: ${{ fromJson(steps.cache.outputs.no-cache || 'false') || fromJson(steps.issue_comment.outputs.DISABLE_CACHE || 'false') || fromJson(steps.cache.outputs.deleted_count || '0') > 20 }}
             BOOTSTRAP: ${{ steps.cache.outputs.bootstrap }}
             CONFIGURE: ${{ steps.cache.outputs.configure }}
             EVENT: ${{ github.event_name }}
