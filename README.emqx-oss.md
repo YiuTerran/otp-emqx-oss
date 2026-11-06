@@ -33,9 +33,11 @@ at `/opt/emqx-otp`, first in PATH. License and modification records are under
 `/opt/emqx-otp/share/licenses/erlang`. Debian packages retain their own licenses.
 No `latest` tag is moved; consumers should pin the multi-architecture digest.
 
-Push a `docker-<OTP_VERSION>-1-debian13` tag to run
+Push a new `docker-<OTP_VERSION>-<REVISION>-debian13` tag to run
 `.github/workflows/release-emqx-otp-docker.yaml`. The workflow also accepts an
 existing source tag through manual dispatch. It uses the `docker` GitHub
 environment's `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` secrets. amd64 and arm64
 build natively; both must pass installed-runtime checks before publication.
-The `-1` component is the image packaging revision, separate from OTP_VERSION.
+`REVISION` is a positive integer image packaging revision, separate from
+OTP_VERSION. Increment it for a new build and never move an existing source
+tag or overwrite an existing published image version.
