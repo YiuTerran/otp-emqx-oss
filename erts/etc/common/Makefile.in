@@ -332,7 +332,7 @@ $(LOGMESS_GENERATED): $(WINETC)/erlsrv/erlsrv_logmess.mc
 COMMA_CHAR := ,
 SPACE_CHAR := $(subst ,, )
 
-OTP_VSN_COMMA_SEP  := $(shell echo $(OTP_VERSION) | sed -e 's;-[^-]\+$$;;' )
+OTP_VSN_COMMA_SEP  := $(shell echo $(OTP_VERSION) | sed -e 's;-.*$$;;' )
 
 ERTS_VSN_COMMA_SEP := $(subst .,$(SPACE_CHAR),$(VSN))
 OTP_VSN_COMMA_SEP  := $(subst .,$(SPACE_CHAR),$(OTP_VSN_COMMA_SEP))
