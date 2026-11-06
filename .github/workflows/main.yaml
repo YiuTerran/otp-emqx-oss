@@ -432,7 +432,8 @@ jobs:
   build:
     name: Build Erlang/OTP
     # Docker 29.4.2 on Ubuntu 26.04 denies i386 socketcall with ENOSYS.
-    # Keep 32-bit builds on 24.04 without disabling the default seccomp profile.
+    # Both 32-bit and cross-compile execute an i386 bootstrap runtime.
+    # Keep them on 24.04 without disabling the default seccomp profile.
     # https://github.com/actions/runner-images/issues/14790
     runs-on: ${{ matrix.type == 'clang' && 'ubuntu-latest' || 'ubuntu-24.04' }}
     needs: pack
