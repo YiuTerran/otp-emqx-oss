@@ -36,6 +36,12 @@ case "${BASE_BRANCH}" in
     emqx-OTP-*)
         LATEST_ERLANG_VERSION="$(echo "$BASE_BRANCH" | grep -oP 'emqx-OTP-\K[0-9]+')"
         ;;
+    emqx-[0-9]*)
+        ## Security/release branches use emqx-27.x rather than emqx-OTP-27.x.
+        ## Keep test dependencies compatible with the OTP version under test.
+        LATEST_ERLANG_VERSION="$(echo "$BASE_BRANCH" | sed -E 's/^emqx-([0-9]+).*/\1/')"
+        BASE_BRANCH="maint-${LATEST_ERLANG_VERSION}"
+        ;;
     maint-*)
         LATEST_ERLANG_VERSION=${BASE_BRANCH#"maint-"}
         ;;
