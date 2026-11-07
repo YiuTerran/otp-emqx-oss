@@ -1033,54 +1033,79 @@ op_switch_to_drop(cleanup, _Config) ->
 op_switch_to_flush() ->
     [{timetrap,{minutes,3}}].
 op_switch_to_flush(Config) ->
-    Test =
-        fun() ->
-                {Log,HConfig,DLHConfig} =
-                    start_handler(?MODULE, ?FUNCTION_NAME, Config),
-                
-                %% NOTE: it's important that both async and sync
-                %% requests have been queued when the flush happens
-                %% (verify with coverage of flush_log_requests/2)
-    
-                NewHConfig =
-                    HConfig#{config =>
-                                 DLHConfig#{sync_mode_qlen => 2,
-                                            %% disable drop mode
-                                            drop_mode_qlen => 300,
-                                            flush_qlen => 300,
-                                            burst_limit_enable => false}},    
-                ok = logger:update_handler_config(?MODULE, NewHConfig),
-                NumOfReqs = 10000,
-                Procs = 10,
-                Bursts = 10,
-                %% It sometimes happens that the handler either gets
-                %% the requests in a slow enough pace so that flushing
-                %% never occurs, or it gets all messages at once,
-                %% causing all messages to get flushed (no dropping of
-                %% sync messages gets tested). Therefore, lets
-                %% generate a number of bursts to increase the chance
-                %% of message buildup in some random fashion.
-                [send_burst({n,NumOfReqs}, {spawn,Procs,0}, {chars,79}, notice) ||
-                    _ <- lists:seq(1,Bursts)],
-                Logged = count_lines(Log),
-                ok= stop_handler(?MODULE),
-                ct:pal("Number of messages flushed/dropped = ~w (~w)",
-                       [NumOfReqs*Procs*Bursts-Logged,NumOfReqs*Procs*Bursts]),
-                true = (Logged < (NumOfReqs*Procs*Bursts)),
-                true = (Logged > 0),
-                _ = file_delete(Log),
-                ok
+    {Log,HConfig,DLHConfig} = start_handler(?MODULE, ?FUNCTION_NAME, Config),
+    FlushQLen = 300,
+    NewHConfig =
+        HConfig#{filter_default => stop,
+                 filters => [{domain,{fun logger_filters:domain/2,
+                                      {log,equal,[?MODULE]}}}],
+                 config => DLHConfig#{sync_mode_qlen => 2,
+                                      %% disable drop mode
+                                      drop_mode_qlen => FlushQLen,
+                                      flush_qlen => FlushQLen,
+                                      burst_limit_enable => false,
+                                      filesync_repeat_interval => no_repeat}},
+    ok = logger:update_handler_config(?MODULE, NewHConfig),
+    Handler = whereis(h_proc_name()),
+    %% The configuration callback is a cast from logger_server, so a call
+    %% from this process alone is not a barrier for its delivery.
+    ok = wait_for_no_repeat(Handler, 100),
+    ok = logger:notice("before flush", ?domain),
+    ok = logger_disk_log_h:filesync(?MODULE),
+    #{mode := async} = logger_olp:info(Handler),
+
+    %% With sync backpressure and only a few producers, even a very large
+    %% burst need not reach FlushQLen. Queue a bounded load while the handler
+    %% is suspended instead. Include both casts and calls, as flush_load/2
+    %% must discard the former and reply 'dropped' to the latter.
+    ok = sys:suspend(Handler),
+    {Sync1,Info,Sync2} =
+        try
+            ok = logger:notice("flush trigger", ?domain),
+            Req1 = gen_server:send_request(Handler,
+                                          {'$olp_load',<<"sync one\n">>}),
+            [ok = logger:notice("async to flush", ?domain) ||
+                _ <- lists:seq(1,FlushQLen)],
+            %% Non-load requests must survive the selective flush.
+            InfoReq = gen_server:send_request(Handler, info),
+            Req2 = gen_server:send_request(Handler,
+                                          {'$olp_load',<<"sync two\n">>}),
+            {Req1,InfoReq,Req2}
+        after
+            ok = sys:resume(Handler)
         end,
-    %% As it's tricky to get the timing right in only one go, we perform the
-    %% test repeatedly, hoping that will generate a successful result.
-    case repeat_until_ok(Test, 10) of
-        {ok,{Failures,_Result}} ->
-            ct:log("Failed ~w times before success!", [Failures]);
-        {fails,Reason} ->
-            ct:fail(Reason)
-    end.
+    {reply,dropped} = gen_server:wait_response(Sync1, 5000),
+    {reply,dropped} = gen_server:wait_response(Sync2, 5000),
+    {reply,#{mode := async}} = gen_server:wait_response(Info, 5000),
+    ok = logger:notice("after flush", ?domain),
+    ok = logger_disk_log_h:filesync(?MODULE),
+
+    %% Only the two surrounding messages may be written. Check the flush
+    %% notification as well, so neither client-side dropping nor a partial
+    %% flush can satisfy the test. The triggering event is not included in
+    %% the notification's count of events removed from the mailbox.
+    Expected = iolist_to_binary(
+                 ["before flush\n",
+                  io_lib:format("Handler ~p flushed ~w log events\n",
+                                [?MODULE,FlushQLen+2]),
+                  "after flush\n"]),
+    {ok,Expected} = file:read_file(Log),
+    ok = stop_handler(?MODULE),
+    ok = file_delete(Log),
+    ok.
 op_switch_to_flush(cleanup, _Config) ->
     _  = stop_handler(?MODULE).
+
+wait_for_no_repeat(_Handler, 0) ->
+    ct:fail(filesync_config_not_applied);
+wait_for_no_repeat(Handler, Attempts) ->
+    case logger_olp:info(Handler) of
+        #{cb_state := #{filesync_repeat_interval := no_repeat}} ->
+            ok;
+        _ ->
+            timer:sleep(50),
+            wait_for_no_repeat(Handler, Attempts-1)
+    end.
 
 
 limit_burst_disabled(Config) ->
