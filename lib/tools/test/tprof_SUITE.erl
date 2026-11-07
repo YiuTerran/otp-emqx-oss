@@ -27,6 +27,7 @@
 %% Test cases exports
 -export([
     call_count_ad_hoc/0, call_count_ad_hoc/1,
+    call_count_background/1, call_count_workload/0, call_count_workload/1,
     call_time_ad_hoc/0, call_time_ad_hoc/1,
     call_memory_ad_hoc/0, call_memory_ad_hoc/1,
     lists_seq_loop/1, call_memory_total/1,
@@ -91,17 +92,18 @@ call_count_ad_hoc() ->
 
 call_count_ad_hoc(Config) when is_list(Config) ->
     ct:capture_start(),
-    ok = tprof:profile(lists, seq, [1, 16]),
+    ok = tprof:profile(?MODULE, call_count_workload, [],
+                       #{pattern => {?MODULE, call_count_workload, '_'}}),
     ct:capture_stop(),
     Output = string:lexemes(lists:flatten(ct:capture_get()), "\n"),
 
-    %% We check that only the things profiled are lists:seq/2 and lists:seq_loop/3
-    %% and that the output looks good
+    %% Check the report format and exact counts using suite-specific functions.
+    %% Shared functions could be called by unrelated processes during profiling.
     ?assertMatch(
-       ["FUNCTION          CALLS  [    %]",
-        "lists:seq/2           1  ["++_,
-        "lists:seq_loop/3      5  ["++_,
-        "                         [100.0]"], Output),
+       ["FUNCTION                           CALLS  [    %]",
+        "tprof_SUITE:call_count_workload/0      1  ["++_,
+        "tprof_SUITE:call_count_workload/1      5  ["++_,
+        "                                          [100.0]"], Output),
 
     %% spawn examples
     SpawnFun =
@@ -114,13 +116,43 @@ call_count_ad_hoc(Config) when is_list(Config) ->
                                                  report => return, type => call_count}),
     ?assertMatch({call_count, [{lists, seq_loop, 3, [{all, _, _}]}]}, Profile1),
 
-    %% timer
-    {{'EXIT', timeout}, {call_count, Profile2}} = tprof:profile(
-        fun () -> Delay = hd(lists:seq(5001, 5032)), receive after Delay -> ok end end,
-        #{timeout => 1000, report => return, type => call_count }),
-    ?assertMatch([{lists, seq, 2, [{_, 1, _}]},
-                  {lists, seq_loop, 3, [{_, 9, _}]},
-                  {?MODULE, _, _, _}], lists:sort(Profile2)),
+    %% call_count profiles all processes, so unrelated background calls may
+    %% appear during the timeout. Make one such call deliberately, from a
+    %% process created before profiling, and check its count as well as the
+    %% exact counts of the profiled fun. Use a suite-specific workload so
+    %% background calls cannot change its count either.
+    Ref = make_ref(),
+    {Background, Monitor} = spawn_monitor(
+        fun () ->
+            receive
+                {Ref, From} ->
+                    From ! ?MODULE:call_count_background(Ref)
+            end
+        end),
+    TimedFun = fun () ->
+                       Delay = ?MODULE:call_count_workload(8),
+                       Background ! {Ref, self()},
+                       receive Ref -> ok end,
+                       receive after Delay -> ok end
+               end,
+    {{'EXIT', timeout}, {call_count, Profile2}} =
+        try
+            tprof:profile(TimedFun,
+                          #{timeout => 1000, report => return, type => call_count})
+        after
+            exit(Background, kill),
+            demonitor(Monitor, [flush])
+        end,
+    {name, TimedFunName} = erlang:fun_info(TimedFun, name),
+    Expected = [{?MODULE, call_count_workload, 1, [{all, 9, 9}]},
+                {?MODULE, call_count_background, 1, [{all, 1, 1}]}],
+    MFAs = [{M, F, A} || {M, F, A, _} <- Expected],
+    Actual = [Entry || Entry = {M, F, A, _} <- Profile2,
+                       lists:member({M, F, A}, MFAs)],
+    ?assertEqual(lists:sort(Expected), lists:sort(Actual)),
+    ?assertMatch([{?MODULE, TimedFunName, _, [{all, 1, 1}]}],
+                 [Entry || Entry = {?MODULE, F, _, _} <- Profile2,
+                           F =:= TimedFunName]),
 
     %% timer with patterns
     {{'EXIT', timeout}, Profile3} = tprof:profile(
@@ -128,6 +160,14 @@ call_count_ad_hoc(Config) when is_list(Config) ->
         #{timeout => 1000, report => return, type => call_count,
           pattern => [{lists, seq_loop, '_'}]}),
     ?assertMatch({call_count, [{lists, seq_loop, 3, [{all, _, _}]}]}, Profile3).
+
+%% Called outside the profiled process while the call_count profile is active.
+call_count_background(Ref) -> Ref.
+
+call_count_workload() -> call_count_workload(4).
+
+call_count_workload(0) -> 5001;
+call_count_workload(N) -> call_count_workload(N - 1).
 
 call_time_ad_hoc() ->
     [{doc, "Ad-hoc examples for call_time measurement"}].
