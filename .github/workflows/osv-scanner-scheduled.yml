@@ -76,8 +76,9 @@ jobs:
 
   scan-pr:
     # run-scheduled-scan triggers this job
-    # PRs and pushes trigger this job
-    if: github.event_name != 'schedule'
+    # PRs, pushes and manual runs trigger this job.
+    # Forks scan their default branch directly on the daily schedule.
+    if: github.event_name != 'schedule' || github.repository != 'erlang/otp'
     permissions:
         # Require writing security events to upload SARIF file to security tab
         security-events: write
