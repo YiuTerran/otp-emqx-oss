@@ -24,8 +24,9 @@ jobs:
           token: ${{ steps.generate_token.outputs.token }}
 
       - name: Run GitHub Actions Version Updater
-        uses: saadmk11/github-actions-version-updater@d8781caf11d11168579c8e5e94f62b068038f442 # v0.9.0
+        uses: saadmk11/github-actions-version-updater@764bee6cd2905c6c91624f35332f1472fa736c23 # v1.0.3
         with:
           token: ${{ steps.generate_token.outputs.token }}
+          update_version_with: release-commit-sha
           pull_request_branch: "github/actions-update"
           extra_workflow_locations: ".github/actions/build-base-image"
