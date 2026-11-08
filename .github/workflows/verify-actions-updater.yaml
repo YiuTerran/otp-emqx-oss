@@ -57,7 +57,25 @@ jobs:
                   if not match:
                       continue
                   value = match[1]
-                  if value.startswith(('./', '${{')):
+                  if value.startswith(('./', ')):
+                      continue
+                  pattern = r'@sha256:[0-9a-f]{64}$' if value.startswith('docker://') else r'@[0-9a-f]{40}$'
+                  assert re.search(pattern, value), (str(path), value)
+          print('All rewritten action references remain immutable.')
+          PY
+      - name: Recheck all updates using the same isolated package
+        env:
+          GHA_UPDATE_TOKEN: ${{ github.token }}
+          UV_CACHE_DIR: ${{ runner.temp }}/update-gha/uv-cache
+          UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/update-gha/python
+          UV_TOOL_DIR: ${{ runner.temp }}/update-gha/tools
+        run: |
+          uv --no-config tool run --isolated --no-env-file \
+            --managed-python --python 3.14 --default-index https://pypi.org/simple \
+            --from 'update-gha[action]==1.0.3' update-gha \
+            --no-pull-request --check --update-version-with release-commit-sha \
+            --extra-workflow-locations .github/actions/build-base-image
+ + '{{')):
                       continue
                   pattern = r'@sha256:[0-9a-f]{64}$' if value.startswith('docker://') else r'@[0-9a-f]{40}$'
                   assert re.search(pattern, value), (str(path), value)
